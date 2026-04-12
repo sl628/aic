@@ -18,22 +18,19 @@
 """Entry point for RLT training.
 
 Usage:
-    # Phase 1: Pretrain RL token on demonstrations
+    # Phase 1: Pretrain RL token on pre-extracted XVLA embeddings
     python train.py --mode pretrain_rl_token \
-        --demo_dir /path/to/demos \
-        --checkpoint_dir checkpoints/rlt \
-        --vla_model_path /path/to/pi0
+        --data_dir /home/yifeng/aic_data \
+        --embeddings_dir /home/yifeng/aic_data/embeddings \
+        --checkpoint_dir checkpoints/rlt
 
     # Phase 2: Online RL (requires a running robot/sim environment)
     python train.py --mode online_rl \
         --checkpoint_dir checkpoints/rlt \
         --load_checkpoint checkpoints/rlt/phase1_rl_token.pt \
-        --vla_model_path /path/to/pi0
+        --vla_model_dir /home/yifeng/models/xvla-base
 
-This script wires together the VLA backbone (π0 or similar), the RLT training
-components from aic_rlt, and the AIC environment callbacks.
-
-Adapt the VLA loading section to your specific VLA checkpoint format.
+    Run prepare_embeddings.py first to generate the embeddings directory.
 """
 
 import argparse
@@ -49,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from aic_rlt import RLTConfig, RLTTrainer
 from aic_rlt.models.rl_token import RLTokenConfig
 from aic_rlt.models.actor_critic import ActorCriticConfig
+from aic_rlt.data.lerobot_dataset import LeRobotEmbeddingDataset
 
 logging.basicConfig(
     level=logging.INFO,
@@ -192,67 +190,145 @@ def parse_args():
         default="full",
         help="Training phase to run",
     )
-    parser.add_argument("--demo_dir", type=str, default="demos/")
-    parser.add_argument("--vla_model_path", type=str, default="")
+    # Phase 1 (offline) arguments
+    parser.add_argument("--data_dir", type=str, default="/home/yifeng/aic_data",
+                        help="LeRobot v3.0 dataset root (contains data/, meta/)")
+    parser.add_argument("--embeddings_dir", type=str, default="",
+                        help="Directory of pre-extracted XVLA embeddings (.pt files)")
+    # Phase 2 (online RL) arguments
+    parser.add_argument("--vla_model_dir", type=str, default="/home/yifeng/models/xvla-base",
+                        help="XVLA model directory for online RL inference")
+    parser.add_argument("--instruction", type=str,
+                        default="Insert SFP cable into NIC port")
+    # Shared arguments
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints/rlt")
     parser.add_argument("--load_checkpoint", type=str, default="")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    # Override key hyperparameters
+    # Hyperparameter overrides
     parser.add_argument("--bc_coeff", type=float, default=1.0)
     parser.add_argument("--n_warmup_steps", type=int, default=2000)
     parser.add_argument("--total_env_steps", type=int, default=50000)
     parser.add_argument("--hidden_dims", type=int, nargs="+", default=[256, 256])
+    parser.add_argument("--rl_token_epochs", type=int, default=50)
+    parser.add_argument("--chunk_length", type=int, default=10)
     return parser.parse_args()
+
+
+def _detect_embedding_dims(embeddings_dir: str) -> tuple:
+    """Read the first .pt file to determine (vla_embed_dim, num_vla_tokens)."""
+    emb_files = sorted(Path(embeddings_dir).glob("episode_*.pt"))
+    if not emb_files:
+        raise FileNotFoundError(f"No embedding files found in {embeddings_dir}")
+    data = torch.load(emb_files[0], map_location="cpu", weights_only=True)
+    emb = data["vla_embeddings"]   # (T, num_tokens, embed_dim)
+    num_tokens = emb.shape[1]
+    embed_dim = emb.shape[2]
+    logger.info(f"Detected embedding shape: T={emb.shape[0]}, num_tokens={num_tokens}, embed_dim={embed_dim}")
+    return embed_dim, num_tokens
 
 
 def main():
     args = parse_args()
     device = torch.device(args.device)
 
-    # Build config
-    rl_token_cfg = RLTokenConfig()
-    actor_critic_cfg = ActorCriticConfig(
-        rl_token_dim=rl_token_cfg.rl_token_dim,
-        hidden_dims=args.hidden_dims,
-        bc_coeff=args.bc_coeff if hasattr(args, "bc_coeff") else 1.0,
-    )
-    config = RLTConfig(
-        rl_token=rl_token_cfg,
-        actor_critic=actor_critic_cfg,
-        bc_coeff=args.bc_coeff,
-        n_warmup_steps=args.n_warmup_steps,
-        total_env_steps=args.total_env_steps,
-        checkpoint_dir=args.checkpoint_dir,
-    )
-
-    # Load VLA
-    vla = load_vla(args.vla_model_path, device)
-
-    # Build environment
-    env = AICEnvWrapper(vla=vla, prop_dim=actor_critic_cfg.prop_dim)
-
-    # Build trainer with callbacks
-    trainer = RLTTrainer(
-        config=config,
-        device=device,
-        get_vla_embeddings=lambda obs: vla.get_embeddings(obs),
-        get_vla_action_chunk=lambda obs: vla.get_action_chunk(obs),
-        get_prop_state=lambda obs: env.get_prop_state(obs),
-        env_step=lambda a: env.step(a),
-        human_intervention=env.human_intervention,
-    )
-
-    # Optionally load prior checkpoint
-    if args.load_checkpoint:
-        trainer.load_checkpoint(args.load_checkpoint)
-
-    # Run requested phase(s)
     if args.mode in ("pretrain_rl_token", "full"):
-        demo_dataset = DemoDataset(args.demo_dir, vla, device)
+        # --- Phase 1: offline pretraining ---
+
+        if not args.embeddings_dir:
+            raise ValueError(
+                "--embeddings_dir is required for pretrain_rl_token. "
+                "Run scripts/prepare_embeddings.py first."
+            )
+
+        # Auto-detect embedding dimensions from saved files
+        vla_embed_dim, num_vla_tokens = _detect_embedding_dims(args.embeddings_dir)
+
+        rl_token_cfg = RLTokenConfig(
+            vla_embed_dim=vla_embed_dim,
+            num_vla_tokens=num_vla_tokens,
+        )
+        actor_critic_cfg = ActorCriticConfig(
+            rl_token_dim=rl_token_cfg.rl_token_dim,
+            action_dim=7,
+            prop_dim=26,
+            chunk_length=args.chunk_length,
+            hidden_dims=args.hidden_dims,
+        )
+        config = RLTConfig(
+            rl_token=rl_token_cfg,
+            actor_critic=actor_critic_cfg,
+            bc_coeff=args.bc_coeff,
+            n_warmup_steps=args.n_warmup_steps,
+            total_env_steps=args.total_env_steps,
+            rl_token_epochs=args.rl_token_epochs,
+            checkpoint_dir=args.checkpoint_dir,
+        )
+
+        trainer = RLTTrainer(config=config, device=device)
+
+        if args.load_checkpoint:
+            trainer.load_checkpoint(args.load_checkpoint)
+
+        demo_dataset = LeRobotEmbeddingDataset(
+            data_dir=args.data_dir,
+            embeddings_dir=args.embeddings_dir,
+            chunk_length=args.chunk_length,
+        )
         trainer.pretrain_rl_token(demo_dataset)
         trainer.save_checkpoint("phase1_rl_token")
 
     if args.mode in ("online_rl", "full"):
+        # --- Phase 2: online RL with live XVLA ---
+        from aic_rlt.vla.xvla_wrapper import XVLAWrapper
+
+        # For online RL, re-use embedding dims from Phase 1 checkpoint or re-detect
+        if args.embeddings_dir:
+            vla_embed_dim, num_vla_tokens = _detect_embedding_dims(args.embeddings_dir)
+        else:
+            # Defaults — will be overridden if loading a checkpoint
+            vla_embed_dim, num_vla_tokens = 1024, 577
+
+        rl_token_cfg = RLTokenConfig(
+            vla_embed_dim=vla_embed_dim,
+            num_vla_tokens=num_vla_tokens,
+        )
+        actor_critic_cfg = ActorCriticConfig(
+            rl_token_dim=rl_token_cfg.rl_token_dim,
+            action_dim=7,
+            prop_dim=26,
+            chunk_length=args.chunk_length,
+            hidden_dims=args.hidden_dims,
+        )
+        config = RLTConfig(
+            rl_token=rl_token_cfg,
+            actor_critic=actor_critic_cfg,
+            bc_coeff=args.bc_coeff,
+            n_warmup_steps=args.n_warmup_steps,
+            total_env_steps=args.total_env_steps,
+            checkpoint_dir=args.checkpoint_dir,
+        )
+
+        vla = XVLAWrapper(
+            model_dir=args.vla_model_dir,
+            device=device,
+            instruction=args.instruction,
+            chunk_length=args.chunk_length,
+        )
+        env = AICEnvWrapper(vla=vla, prop_dim=actor_critic_cfg.prop_dim)
+
+        trainer = RLTTrainer(
+            config=config,
+            device=device,
+            get_vla_embeddings=lambda obs: vla.get_embeddings(obs),
+            get_vla_action_chunk=lambda obs: vla.get_action_chunk(obs, env.get_prop_state(obs)),
+            get_prop_state=lambda obs: env.get_prop_state(obs),
+            env_step=lambda a: env.step(a),
+            human_intervention=env.human_intervention,
+        )
+
+        if args.load_checkpoint:
+            trainer.load_checkpoint(args.load_checkpoint)
+
         trainer.train(initial_obs_fn=env.reset)
 
 
