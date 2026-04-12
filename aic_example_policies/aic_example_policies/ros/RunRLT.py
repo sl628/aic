@@ -298,9 +298,9 @@ class RunRLT(Policy):
     def _encode_rl_state(self, obs: Observation):
         """Returns z_rl (1, D_rl), prop (1, prop_dim), ref_chunk (1, C, D) tensors."""
         # VLA embeddings → RL token
-        vla_embeds = self._vla.get_embeddings(obs)           # (1, N, D_vla)
+        vla_embeds = self._vla.get_embeddings(obs).to(self.device)  # (1, N, D_vla)
         with torch.no_grad():
-            _, z_rl = self.rl_token_model.encode(vla_embeds)  # (1, D_rl)
+            _, z_rl = self.rl_token_model.encode(vla_embeds)        # (1, D_rl)
 
         # VLA reference action chunk
         ref_np = self._vla.get_action_chunk(obs)              # (C, D)
