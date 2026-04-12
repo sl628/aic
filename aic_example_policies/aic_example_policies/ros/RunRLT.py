@@ -125,8 +125,20 @@ class RunRLT(Policy):
                 "Models will be randomly initialized – only useful for testing."
             )
 
-        # ---- Build model components ----
+        # ---- Infer model config from checkpoint (if provided) ----
+        # The RLTokenConfig defaults may not match training; read dims from the
+        # saved weights to guarantee consistency.
         rl_token_cfg = RLTokenConfig()
+        if checkpoint_path:
+            _ckpt = torch.load(checkpoint_path, map_location="cpu")
+            _w = _ckpt["rl_token_model"]["input_proj.weight"]  # (encoder_dim, vla_embed_dim)
+            rl_token_cfg.vla_embed_dim = _w.shape[1]
+            _pe = _ckpt["rl_token_model"]["pos_enc.pe"]         # (1, num_vla_tokens+1, enc_dim)
+            rl_token_cfg.num_vla_tokens = _pe.shape[1] - 1
+            _rp = _ckpt["rl_token_model"]["readout_proj.weight"]  # (rl_token_dim, enc_dim)
+            rl_token_cfg.rl_token_dim = _rp.shape[0]
+            del _ckpt, _w, _pe, _rp
+
         actor_critic_cfg = ActorCriticConfig(
             rl_token_dim=rl_token_cfg.rl_token_dim,
             prop_dim=self.PROP_DIM,
