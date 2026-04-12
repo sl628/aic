@@ -59,7 +59,8 @@ class RunACT(Policy):
         # -------------------------------------------------------------------------
         # 1. Configuration & Weights Loading
         # -------------------------------------------------------------------------
-        repo_id = "grkw/aic_act_policy"
+        # repo_id = "grkw/aic_act_policy"
+        repo_id = "siyulw2025/aic_act_synthetic_cable_insertion"
 
         # Path to your checkpoint folder
         policy_path = Path(
