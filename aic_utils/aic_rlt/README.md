@@ -14,21 +14,7 @@ cd aic_utils/aic_rlt
 pip install -e .
 ```
 
-### 2. Implement the VLA stub
-
-In `scripts/train.py`, replace `load_vla()` with your actual VLA (π0, ACT, etc.).
-The VLA object must expose:
-
-```python
-vla.get_embeddings(obs) -> torch.Tensor  # (1, N, D_vla) internal embeddings
-vla.get_action_chunk(obs) -> np.ndarray  # (C, D) reference action chunk
-```
-
-For ACT (the AIC baseline), add forward hooks on the transformer layers to capture
-intermediate embeddings and update `RLTokenConfig.vla_embed_dim` / `num_vla_tokens`
-to match.
-
-### 3. Pre-extract XVLA embeddings
+### 2. Pre-extract XVLA embeddings
 
 Before Phase 1 training you must run `prepare_embeddings.py` once to extract XVLA
 Florence-2 embeddings from your LeRobot v3.0 dataset and save them to disk.
@@ -53,12 +39,12 @@ XVLA encoder, and writes one file per episode:
 The script is idempotent — already-extracted episodes are skipped unless `--overwrite`
 is passed.
 
-### 4. Phase 1 — Pretrain RL Token
+### 3. Phase 1 — Pretrain RL Token
 
-Requires: the embeddings directory produced in step 3.
+Requires: the embeddings directory produced in step 2.
 
 ```bash
-python scripts/train.py \
+pixi run python scripts/train.py \
     --mode pretrain_rl_token \
     --data_dir /home/yifeng/aic_data \
     --embeddings_dir /home/yifeng/aic_data/embeddings \
@@ -68,13 +54,13 @@ python scripts/train.py \
 Embedding dimensions (`vla_embed_dim`, `num_vla_tokens`) are detected automatically
 from the first `.pt` file in `--embeddings_dir`.
 
-### 5a. Phase 2 — Offline RL (trajectory data only)
+### 4a. Phase 2 — Offline RL (trajectory data only)
 
 Requires: the Phase 1 checkpoint and the embeddings directory. Increase `--bc_coeff`
 to 2.0–5.0 to compensate for the lack of online coverage.
 
 ```bash
-python scripts/train.py \
+pixi run python scripts/train.py \
     --mode offline_rl \
     --load_checkpoint checkpoints/rlt/phase1_rl_token.pt \
     --data_dir /home/yifeng/aic_data \
@@ -84,15 +70,16 @@ python scripts/train.py \
     --n_offline_epochs 100
 ```
 
-### 5b. Phase 2 — Online RL (live robot or simulator)
+### 4b. Phase 2 — Online RL (live robot or simulator)
 
 Requires: real-time environment interaction. Replace `AICEnvWrapper` in `train.py` with
 real environment calls (MuJoCo, Gazebo, or the live robot via the AIC ROS 2 interface).
 
 ```bash
-python scripts/train.py \
+pixi run python scripts/train.py \
     --mode online_rl \
     --load_checkpoint checkpoints/rlt/phase1_rl_token.pt \
+    --vla_backend xvla \
     --vla_model_dir /home/yifeng/models/xvla-base \
     --checkpoint_dir checkpoints/rlt \
     --n_warmup_steps 2000 \
@@ -100,17 +87,52 @@ python scripts/train.py \
     --bc_coeff 1.0
 ```
 
-### 5. Inference (AIC ROS 2 framework)
+### 5. Run in Simulation
+
+Two terminals are required:
+
+**Terminal 1 — launch the evaluation environment:**
+
+```bash
+distrobox enter -r aic_eval -- /entrypoint.sh ground_truth:=false start_aic_engine:=true
+```
+
+Wait until you see `Retrying connection to aic_engine...`.
+
+**Terminal 2 — run the RLT policy with XVLA backend:**
 
 ```bash
 pixi run ros2 run aic_model aic_model \
     --ros-args \
     -p use_sim_time:=true \
     -p policy:=aic_example_policies.ros.RunRLT \
-    -p policy_args.checkpoint_path:=/path/to/checkpoints/rlt/final.pt
+    -p policy_args.vla_backend:=xvla \
+    -p policy_args.checkpoint_path:=checkpoints/rlt/phase2_offline.pt \
+    -p policy_args.vla_model_dir:=/home/yifeng/models/xvla-base \
+    "-p policy_args.instruction:=Insert SFP cable into NIC port"
 ```
 
-Fill in `RunRLT._load_vla()` with the same VLA loader used during training.
+**Alternative — Pi0.5 backend (requires JAX + openpi installed):**
+
+```bash
+pixi run ros2 run aic_model aic_model \
+    --ros-args \
+    -p use_sim_time:=true \
+    -p policy:=aic_example_policies.ros.RunRLT \
+    -p policy_args.vla_backend:=pi05 \
+    -p policy_args.checkpoint_path:=checkpoints/rlt/phase2_offline.pt \
+    -p policy_args.pi05_checkpoint:=/home/yifeng/workspace/pi05_base/pi05_base \
+    "-p policy_args.instruction:=Insert SFP cable into NIC port"
+```
+
+**Checkpoint locations:**
+
+| File | Contents |
+|---|---|
+| `checkpoints/rlt/phase1_rl_token.pt` | RL Token encoder-decoder (Phase 1) |
+| `checkpoints/rlt/phase2_offline.pt` | Full actor + critic (Phase 2, offline RL) |
+
+See [`checkpoints/rlt/README.md`](../../checkpoints/rlt/README.md) for checkpoint format details.
 
 ---
 
@@ -606,19 +628,23 @@ aic_utils/aic_rlt/
 ├── aic_rlt/
 │   ├── __init__.py
 │   ├── models/
-│   │   ├── rl_token.py       # RL Token encoder-decoder (Section III-A)
-│   │   └── actor_critic.py   # Actor + twin-critic MLPs (Section III-B)
+│   │   ├── rl_token.py         # RL Token encoder-decoder (Section III-A)
+│   │   └── actor_critic.py     # Actor + twin-critic MLPs (Section III-B)
 │   ├── data/
 │   │   └── lerobot_dataset.py  # LeRobotEmbeddingDataset — reads pre-extracted .pt files
 │   ├── vla/
-│   │   └── xvla_wrapper.py   # XVLAWrapper — XVLA model interface
-│   ├── replay_buffer.py      # Off-policy replay buffer
-│   └── trainer.py            # Full training loop — Algorithm 1
+│   │   ├── base.py             # VLABackend abstract interface
+│   │   ├── __init__.py         # create_vla_backend() factory
+│   │   ├── xvla_wrapper.py     # XVLAWrapper — low-level XVLA model interface
+│   │   ├── xvla_backend.py     # XVLABackend — VLABackend implementation for XVLA
+│   │   └── pi05_backend.py     # Pi05Backend — VLABackend implementation for Pi0.5
+│   ├── replay_buffer.py        # Off-policy replay buffer
+│   └── trainer.py              # Full training loop — Algorithm 1
 ├── scripts/
-│   ├── prepare_embeddings.py # Step 3: offline XVLA embedding extraction (run once)
-│   └── train.py              # Steps 4-5: Phase 1 + Phase 2 training entry-point
+│   ├── prepare_embeddings.py   # Step 3: offline XVLA embedding extraction (run once)
+│   └── train.py                # Steps 4-6: Phase 1 + Phase 2 training entry-point
 ├── setup.py
-└── README.md                 # This file
+└── README.md                   # This file
 
 # Inference policy (AIC ROS 2 framework):
 aic_example_policies/aic_example_policies/ros/RunRLT.py

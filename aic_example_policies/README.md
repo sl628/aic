@@ -82,6 +82,61 @@ pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true -p policy
 
 ---
 
+### 4. RunRLT - RL Token Policy (XVLA or Pi0.5)
+
+An implementation of **RL Token** (Xu et al. 2025) that augments a frozen VLA backbone with a
+lightweight RL-trained actor/critic. The VLA's internal embeddings are compressed into a single
+`z_rl` vector by the RL Token encoder; the actor MLP then produces action chunks conditioned on
+`z_rl`, proprioceptive state, and the VLA's own reference chunk.
+
+Supports two VLA backends:
+- **`xvla`** (default) — [lerobot/xvla-base](https://huggingface.co/lerobot/xvla-base), Florence-2, pure PyTorch, 115 tokens × 1024-dim
+- **`pi05`** — Pi0.5 (openpi), PaliGemma, JAX (requires separate JAX env)
+
+**Purpose:** Demonstrates how to plug a trained RL policy on top of a pretrained VLA for fine-grained manipulation.
+
+**Prerequisites:** Follow the training workflow in [`aic_utils/aic_rlt/README.md`](../aic_utils/aic_rlt/README.md) to produce a trained checkpoint at `checkpoints/rlt/phase2_offline.pt`.
+
+---
+
+**Step 1 — Launch the evaluation environment (Terminal 1):**
+
+```bash
+distrobox enter -r aic_eval -- /entrypoint.sh ground_truth:=false start_aic_engine:=true
+```
+
+Wait until you see `Retrying connection to aic_engine...` before starting the policy.
+
+**Step 2 — Run RunRLT with XVLA backend (Terminal 2):**
+
+```bash
+pixi run ros2 run aic_model aic_model \
+    --ros-args \
+    -p use_sim_time:=true \
+    -p policy:=aic_example_policies.ros.RunRLT \
+    -p policy_args.vla_backend:=xvla \
+    -p policy_args.checkpoint_path:=checkpoints/rlt/phase2_offline.pt \
+    -p policy_args.vla_model_dir:=/home/yifeng/models/xvla-base \
+    "-p policy_args.instruction:=Insert SFP cable into NIC port"
+```
+
+**Alternative — Pi0.5 backend (requires JAX + openpi):**
+
+```bash
+pixi run ros2 run aic_model aic_model \
+    --ros-args \
+    -p use_sim_time:=true \
+    -p policy:=aic_example_policies.ros.RunRLT \
+    -p policy_args.vla_backend:=pi05 \
+    -p policy_args.checkpoint_path:=checkpoints/rlt/phase2_offline.pt \
+    -p policy_args.pi05_checkpoint:=/home/yifeng/workspace/pi05_base/pi05_base \
+    "-p policy_args.instruction:=Insert SFP cable into NIC port"
+```
+
+**Source:** [`RunRLT.py`](./aic_example_policies/ros/RunRLT.py)
+
+---
+
 ## Scoring Examples
 
 For expected scoring results and reproducible test commands for each policy, see the [Scoring Test & Evaluation Guide](../../docs/scoring_tests.md).
