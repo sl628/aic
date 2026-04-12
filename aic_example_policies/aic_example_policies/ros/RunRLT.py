@@ -34,7 +34,9 @@ Usage (ROS 2):
         --ros-args \
         -p use_sim_time:=true \
         -p policy:=aic_example_policies.ros.RunRLT \
-        -p policy_args.checkpoint_path:=/path/to/checkpoints/rlt/final.pt
+        -p policy_args.checkpoint_path:=/path/to/checkpoints/rlt/phase2_offline.pt \
+        -p policy_args.vla_model_dir:=/home/yifeng/models/xvla-base \
+        -p policy_args.instruction:="Insert SFP cable into NIC port"
 """
 
 import time
@@ -46,6 +48,10 @@ import torch
 import cv2
 from geometry_msgs.msg import Twist, Vector3
 from rclpy.node import Node
+
+# Default XVLA model directory (override via policy_args.vla_model_dir)
+DEFAULT_VLA_MODEL_DIR = "/home/yifeng/models/xvla-base"
+DEFAULT_INSTRUCTION = "Insert SFP cable into NIC port"
 
 from aic_model.policy import (
     GetObservationCallback,
@@ -97,10 +103,20 @@ class RunRLT(Policy):
         super().__init__(parent_node)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Read checkpoint path from ROS parameter (set via policy_args)
+        # Read parameters from ROS (set via policy_args)
         checkpoint_path = DEFAULT_CHECKPOINT
+        vla_model_dir = DEFAULT_VLA_MODEL_DIR
+        instruction = DEFAULT_INSTRUCTION
         try:
             checkpoint_path = parent_node.get_parameter("policy_args.checkpoint_path").value
+        except Exception:
+            pass
+        try:
+            vla_model_dir = parent_node.get_parameter("policy_args.vla_model_dir").value
+        except Exception:
+            pass
+        try:
+            instruction = parent_node.get_parameter("policy_args.instruction").value
         except Exception:
             pass
 
@@ -133,10 +149,7 @@ class RunRLT(Policy):
                 p.requires_grad = False
 
         # ---- VLA backbone ----
-        # TODO: load your actual VLA (π0 / ACT / etc.) here and hook into
-        # its internal embeddings.  The stub below returns zero embeddings
-        # and zero reference actions so the structure compiles end-to-end.
-        self._vla = self._load_vla()
+        self._vla = self._load_vla(vla_model_dir, instruction)
 
         self.get_logger().info(
             f"RunRLT initialized on {self.device}. "
@@ -153,42 +166,79 @@ class RunRLT(Policy):
         self.actor.load_state_dict(ckpt["actor"])
         self.get_logger().info(f"RLT checkpoint loaded from {path}")
 
-    def _load_vla(self):
-        """Load the frozen VLA backbone.
+    def _load_vla(self, model_dir: str, instruction: str):
+        """Load XVLA (lerobot/xvla-base) as the frozen VLA backbone.
 
-        Replace this stub with the actual VLA loading code for your setup.
-        For the AIC challenge, this will typically be a π0 or ACT model
-        loaded from HuggingFace, with forward hooks to capture internal
-        transformer embeddings.
+        Wraps XVLAWrapper in an adapter that accepts ROS Observation messages
+        and extracts the center camera image + proprioceptive state internally.
 
-        The returned object must have:
+        Falls back to a zero-output stub if the model directory does not exist,
+        so the pipeline can be tested for ROS connectivity before XVLA is available.
+
+        The returned object has:
             vla.get_embeddings(obs) -> torch.Tensor (1, N, D_vla)
             vla.get_action_chunk(obs) -> np.ndarray (C, action_dim)
         """
-        self.get_logger().warn(
-            "VLA backbone is a stub. Replace _load_vla() with actual VLA loading."
-        )
+        if not Path(model_dir).exists():
+            self.get_logger().warn(
+                f"XVLA model directory not found: {model_dir}. "
+                "Using zero-output stub. "
+                "Download with: python -c \"from huggingface_hub import snapshot_download; "
+                f"snapshot_download('lerobot/xvla-base', local_dir='{model_dir}')\""
+            )
 
-        class _StubVLA:
-            def __init__(self, device, cfg: RLTokenConfig, C: int, D: int):
-                self.device = device
-                self.N = cfg.num_vla_tokens
-                self.D_vla = cfg.vla_embed_dim
-                self.C = C
-                self.D = D
+            class _StubVLA:
+                def __init__(self, device, cfg: RLTokenConfig, C: int, D: int):
+                    self.device = device
+                    self.N = cfg.num_vla_tokens
+                    self.D_vla = cfg.vla_embed_dim
+                    self.C = C
+                    self.D = D
+
+                def get_embeddings(self, obs) -> torch.Tensor:
+                    return torch.zeros(1, self.N, self.D_vla, device=self.device)
+
+                def get_action_chunk(self, obs) -> np.ndarray:
+                    return np.zeros((self.C, self.D), dtype=np.float32)
+
+            return _StubVLA(self.device, RLTokenConfig(), self.CHUNK_LENGTH, self.ACTION_DIM)
+
+        self.get_logger().info(f"Loading XVLAWrapper from {model_dir} ...")
+        from aic_rlt.vla.xvla_wrapper import XVLAWrapper
+
+        xvla = XVLAWrapper(
+            model_dir=model_dir,
+            device=self.device,
+            instruction=instruction,
+            image_size=256,
+            chunk_length=self.CHUNK_LENGTH,
+        )
+        self.get_logger().info("XVLAWrapper loaded.")
+
+        # Adapter: accepts ROS Observation, extracts center image + prop state
+        extract_prop = self._extract_prop_state
+
+        class _XVLAAdapter:
+            def __init__(self, wrapper: XVLAWrapper, prop_fn):
+                self._xvla = wrapper
+                self._prop_fn = prop_fn
 
             def get_embeddings(self, obs) -> torch.Tensor:
-                return torch.zeros(1, self.N, self.D_vla, device=self.device)
+                img_np = np.frombuffer(obs.center_image.data, dtype=np.uint8).reshape(
+                    obs.center_image.height, obs.center_image.width, 3
+                )
+                # (num_tokens, 1024) → unsqueeze batch dim → (1, num_tokens, 1024)
+                emb = self._xvla.get_embeddings(img_np)
+                return emb.unsqueeze(0)
 
             def get_action_chunk(self, obs) -> np.ndarray:
-                return np.zeros((self.C, self.D), dtype=np.float32)
+                img_np = np.frombuffer(obs.center_image.data, dtype=np.uint8).reshape(
+                    obs.center_image.height, obs.center_image.width, 3
+                )
+                prop = self._prop_fn(obs)
+                return self._xvla.get_action_chunk(img_np, prop)
 
-        return _StubVLA(
-            self.device,
-            RLTokenConfig(),
-            self.CHUNK_LENGTH,
-            self.ACTION_DIM,
-        )
+        return _XVLAAdapter(xvla, extract_prop)
 
     # ------------------------------------------------------------------
     # Observation processing
