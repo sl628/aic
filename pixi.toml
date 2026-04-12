@@ -37,6 +37,8 @@ setuptools = ">=71.0.0,<81.0.0"                                                 
 [pypi-dependencies]
 huggingface-hub = { version = "==0.35.3", extras = ["hf-transfer", "cli"] }
 aic-rlt = { path = "aic_utils/aic_rlt", editable = true }
+transformers = ">=4.40.0"
+timm = ">=0.9.0"
 lerobot = "==0.4.3"
 lerobot_robot_ros = { git = "https://github.com/koonpeng/lerobot-ros", rev = "b4a635fc5264266bd1575f07d54be3d4bbd620e0", subdirectory = "lerobot_robot_ros" }
 lerobot_teleoperator_devices = { git = "https://github.com/koonpeng/lerobot-ros", rev = "b4a635fc5264266bd1575f07d54be3d4bbd620e0", subdirectory = "lerobot_teleoperator_devices" }

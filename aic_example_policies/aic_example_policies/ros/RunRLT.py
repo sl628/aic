@@ -103,22 +103,21 @@ class RunRLT(Policy):
         super().__init__(parent_node)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Read parameters from ROS (set via policy_args)
-        checkpoint_path = DEFAULT_CHECKPOINT
-        vla_model_dir = DEFAULT_VLA_MODEL_DIR
-        instruction = DEFAULT_INSTRUCTION
-        try:
-            checkpoint_path = parent_node.get_parameter("policy_args.checkpoint_path").value
-        except Exception:
-            pass
-        try:
-            vla_model_dir = parent_node.get_parameter("policy_args.vla_model_dir").value
-        except Exception:
-            pass
-        try:
-            instruction = parent_node.get_parameter("policy_args.instruction").value
-        except Exception:
-            pass
+        # Declare then read parameters — ROS 2 raises if get_parameter() is called
+        # on an undeclared parameter, so declare with defaults first.
+        for name, default in [
+            ("policy_args.checkpoint_path", DEFAULT_CHECKPOINT),
+            ("policy_args.vla_model_dir",   DEFAULT_VLA_MODEL_DIR),
+            ("policy_args.instruction",     DEFAULT_INSTRUCTION),
+        ]:
+            try:
+                parent_node.declare_parameter(name, default)
+            except Exception:
+                pass  # already declared
+
+        checkpoint_path = parent_node.get_parameter("policy_args.checkpoint_path").value
+        vla_model_dir   = parent_node.get_parameter("policy_args.vla_model_dir").value
+        instruction     = parent_node.get_parameter("policy_args.instruction").value
 
         if not checkpoint_path:
             self.get_logger().warn(
