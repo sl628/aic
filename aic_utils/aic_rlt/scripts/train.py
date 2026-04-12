@@ -226,15 +226,36 @@ def parse_args():
 
 
 def _detect_embedding_dims(embeddings_dir: str) -> tuple:
-    """Read the first .pt file to determine (vla_embed_dim, num_vla_tokens)."""
-    emb_files = sorted(Path(embeddings_dir).glob("episode_*.pt"))
+    """Read the first .pt file to determine (vla_embed_dim, num_vla_tokens).
+
+    Supports two formats:
+      - Per-episode: episode_0000.pt with shape (T, num_tokens, embed_dim)
+      - Per-frame: ep000_frame0000.pt with shape (num_tokens, embed_dim)
+    """
+    emb_dir = Path(embeddings_dir)
+    # Try per-episode format first
+    emb_files = sorted(emb_dir.glob("episode_*.pt"))
     if not emb_files:
-        raise FileNotFoundError(f"No embedding files found in {embeddings_dir}")
-    data = torch.load(emb_files[0], map_location="cpu", weights_only=True)
-    emb = data["vla_embeddings"]   # (T, num_tokens, embed_dim)
-    num_tokens = emb.shape[1]
-    embed_dim = emb.shape[2]
-    logger.info(f"Detected embedding shape: T={emb.shape[0]}, num_tokens={num_tokens}, embed_dim={embed_dim}")
+        # Try per-frame format
+        emb_files = sorted(emb_dir.glob("*.pt"))
+    if not emb_files:
+        raise FileNotFoundError(f"No .pt embedding files found in {embeddings_dir}")
+
+    data = torch.load(emb_files[0], map_location="cpu", weights_only=False)
+    emb = data["vla_embeddings"]
+    if emb.ndim == 3:
+        # Per-episode: (T, num_tokens, embed_dim)
+        num_tokens = emb.shape[1]
+        embed_dim = emb.shape[2]
+        logger.info(f"Detected per-episode embeddings: T={emb.shape[0]}, num_tokens={num_tokens}, embed_dim={embed_dim}")
+    elif emb.ndim == 2:
+        # Per-frame: (num_tokens, embed_dim)
+        num_tokens = emb.shape[0]
+        embed_dim = emb.shape[1]
+        logger.info(f"Detected per-frame embeddings: num_tokens={num_tokens}, embed_dim={embed_dim}")
+    else:
+        raise ValueError(f"Unexpected embedding shape: {emb.shape}")
+
     return embed_dim, num_tokens
 
 

@@ -26,15 +26,11 @@ Supported backends
 """
 
 from .base import VLABackend
-from .xvla_backend import XVLABackend
-from .xvla_wrapper import XVLAWrapper, quat_to_ee6d, ee6d_to_quat_xyz
 
 __all__ = [
     "VLABackend",
     "XVLABackend",
     "XVLAWrapper",
-    "quat_to_ee6d",
-    "ee6d_to_quat_xyz",
     "Pi05Backend",
     "create_vla_backend",
 ]
@@ -52,9 +48,9 @@ def create_vla_backend(backend: str, device, **kwargs) -> VLABackend:
         Initialised VLABackend subclass with embed_dim and num_tokens set.
     """
     if backend == "xvla":
+        from .xvla_backend import XVLABackend
         return XVLABackend(device=device, **kwargs)
     elif backend == "pi05":
-        # Lazy import so JAX is only required when actually using Pi0.5
         from .pi05_backend import Pi05Backend
         return Pi05Backend(device=device, **kwargs)
     else:
@@ -63,9 +59,15 @@ def create_vla_backend(backend: str, device, **kwargs) -> VLABackend:
         )
 
 
-# Make Pi05Backend importable without triggering JAX at module load time
 def __getattr__(name):
+    """Lazy imports — avoids pulling in lerobot/JAX at module load time."""
     if name == "Pi05Backend":
         from .pi05_backend import Pi05Backend
         return Pi05Backend
+    if name == "XVLABackend":
+        from .xvla_backend import XVLABackend
+        return XVLABackend
+    if name == "XVLAWrapper":
+        from .xvla_wrapper import XVLAWrapper
+        return XVLAWrapper
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

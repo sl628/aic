@@ -246,6 +246,13 @@ class RLTTrainer:
         self._populate_replay_buffer_from_demos(demo_dataset, reward_sigma)
         logger.info(f"Replay buffer size: {len(self.replay_buffer)} transitions")
 
+        # CSV logging for Phase 2
+        log_dir = self._checkpoint_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = log_dir / "phase2_metrics.csv"
+        with open(csv_path, "w") as f:
+            f.write("step,critic_loss,actor_loss\n")
+
         # Offline gradient updates
         steps_per_epoch = max(1, len(self.replay_buffer) // self.config.batch_size)
         n_steps = n_epochs * steps_per_epoch
@@ -261,6 +268,10 @@ class RLTTrainer:
                 for k, v in metrics.items():
                     log_str += f"  {k}={v:.4f}"
                 logger.info(log_str)
+                with open(csv_path, "a") as f:
+                    c_loss = metrics.get("critic_loss", 0.0)
+                    a_loss = metrics.get("actor_loss", 0.0)
+                    f.write(f"{step+1},{c_loss:.6f},{a_loss:.6f}\n")
 
             if (step + 1) % self.config.save_interval == 0:
                 self.save_checkpoint(f"offline_step_{step+1}")
@@ -343,6 +354,13 @@ class RLTTrainer:
             pin_memory=True,
         )
 
+        # CSV logging for Phase 1
+        log_dir = self._checkpoint_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = log_dir / "phase1_loss.csv"
+        with open(csv_path, "w") as f:
+            f.write("epoch,loss\n")
+
         self.rl_token_model.train()
         for epoch in range(self.config.rl_token_epochs):
             total_loss = 0.0
@@ -358,6 +376,8 @@ class RLTTrainer:
 
             avg_loss = total_loss / len(loader)
             logger.info(f"  RL Token epoch {epoch + 1}/{self.config.rl_token_epochs}  loss={avg_loss:.4f}")
+            with open(csv_path, "a") as f:
+                f.write(f"{epoch + 1},{avg_loss:.6f}\n")
 
         # Freeze RL token for online RL
         for p in self.rl_token_model.parameters():
@@ -608,7 +628,7 @@ class RLTTrainer:
         logger.info(f"Checkpoint saved → {ckpt_path}")
 
     def load_checkpoint(self, path: str) -> None:
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.rl_token_model.load_state_dict(ckpt["rl_token_model"])
         self.actor.load_state_dict(ckpt["actor"])
         self.critic.load_state_dict(ckpt["critic"])

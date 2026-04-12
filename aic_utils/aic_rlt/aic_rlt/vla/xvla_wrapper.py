@@ -27,6 +27,7 @@ Action space conversion (lossless):
 """
 
 import logging
+import sys
 from typing import Optional
 
 import numpy as np
@@ -34,7 +35,18 @@ import torch
 import torchvision.transforms.functional as TF
 from transformers import AutoTokenizer
 
-from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+import importlib
+import types
+
+# Bypass lerobot.policies.__init__ which eagerly imports groot (broken on Python 3.12).
+# We only need lerobot.policies.xvla, so we install a dummy lerobot.policies module
+# with the correct __path__ so sub-packages resolve without executing __init__.py.
+if "lerobot.policies" not in sys.modules:
+    _dummy = types.ModuleType("lerobot.policies")
+    _dummy.__path__ = [__import__("lerobot").__path__[0] + "/policies"]
+    sys.modules["lerobot.policies"] = _dummy
+
+XVLAPolicy = importlib.import_module("lerobot.policies.xvla.modeling_xvla").XVLAPolicy
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 logger = logging.getLogger(__name__)

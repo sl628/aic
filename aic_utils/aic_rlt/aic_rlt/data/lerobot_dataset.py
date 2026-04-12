@@ -110,7 +110,7 @@ class LeRobotEmbeddingDataset(Dataset):
                 logger.warning(f"Embedding file not found: {emb_path} — skipping episode {ep_idx}")
                 continue
 
-            emb_data = torch.load(emb_path, map_location="cpu", weights_only=True)
+            emb_data = torch.load(emb_path, map_location="cpu", weights_only=False)
             embeddings = emb_data["vla_embeddings"]   # (T, num_tokens, embed_dim)
 
             if embeddings.shape[0] != T:

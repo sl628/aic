@@ -58,7 +58,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from geometry_msgs.msg import Twist, Vector3, Wrench
+from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3, Wrench
 from rclpy.node import Node
 
 from aic_model.policy import (
@@ -99,7 +99,7 @@ class RunRLT(Policy):
 
     # Action chunk length C (must match training)
     CHUNK_LENGTH: int = 10
-    # Action dimension: 6D velocity + gripper
+    # Action dimension: target TCP pose (x,y,z,qx,qy,qz,qw)
     ACTION_DIM: int = 7
     # Proprioceptive state dimension
     PROP_DIM: int = 26
@@ -255,7 +255,7 @@ class RunRLT(Policy):
     def _validate_checkpoint_dims(self, checkpoint_path: str, cfg: RLTokenConfig) -> None:
         """Warn if checkpoint VLA dims don't match the loaded backend."""
         try:
-            ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+            ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
             w = ckpt["rl_token_model"]["input_proj.weight"]  # (enc_dim, vla_embed_dim)
             ckpt_vla_dim = w.shape[1]
             if ckpt_vla_dim != cfg.vla_embed_dim:
@@ -269,7 +269,7 @@ class RunRLT(Policy):
             self.get_logger().warn(f"Could not validate checkpoint dims: {e}")
 
     def _load_checkpoint(self, path: str) -> None:
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.rl_token_model.load_state_dict(ckpt["rl_token_model"])
         self.actor.load_state_dict(ckpt["actor"])
         self.get_logger().info(f"RLT checkpoint loaded from {path}")
@@ -324,28 +324,35 @@ class RunRLT(Policy):
     # ------------------------------------------------------------------
 
     def _action_to_motion_update(self, action: np.ndarray) -> MotionUpdate:
-        """Convert a 7-dim delta velocity action to a MotionUpdate message."""
-        twist = Twist(
-            linear=Vector3(x=float(action[0]), y=float(action[1]), z=float(action[2])),
-            angular=Vector3(x=float(action[3]), y=float(action[4]), z=float(action[5])),
-        )
+        """Convert a 7-dim TCP pose action to a MotionUpdate (Cartesian position target).
+
+        Action semantics (from dataset / actor output):
+            action[0:3] — target TCP position (x, y, z) in base_link frame
+            action[3:7] — target TCP orientation (qx, qy, qz, qw)
+        """
         motion_update = MotionUpdate()
-        motion_update.velocity = twist
         motion_update.header.frame_id = "base_link"
         motion_update.header.stamp = self.get_clock().now().to_msg()
+        motion_update.pose = Pose(
+            position=Point(x=float(action[0]), y=float(action[1]), z=float(action[2])),
+            orientation=Quaternion(
+                x=float(action[3]), y=float(action[4]),
+                z=float(action[5]), w=float(action[6]),
+            ),
+        )
         motion_update.target_stiffness = np.diag(
-            [100.0, 100.0, 100.0, 50.0, 50.0, 50.0]
-        ).flatten()
+            [85.0, 85.0, 85.0, 50.0, 50.0, 50.0]
+        ).flatten().tolist()
         motion_update.target_damping = np.diag(
-            [40.0, 40.0, 40.0, 15.0, 15.0, 15.0]
-        ).flatten()
+            [75.0, 75.0, 75.0, 20.0, 20.0, 20.0]
+        ).flatten().tolist()
         motion_update.feedforward_wrench_at_tip = Wrench(
             force=Vector3(x=0.0, y=0.0, z=0.0),
             torque=Vector3(x=0.0, y=0.0, z=0.0),
         )
         motion_update.wrench_feedback_gains_at_tip = [0.5, 0.5, 0.5, 0.0, 0.0, 0.0]
         motion_update.trajectory_generation_mode.mode = (
-            TrajectoryGenerationMode.MODE_VELOCITY
+            TrajectoryGenerationMode.MODE_POSITION
         )
         return motion_update
 

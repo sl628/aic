@@ -103,11 +103,16 @@ def load_episode_frames(parquet_files, episode_index: int, camera: str):
 # ---------------------------------------------------------------------------
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Extract XVLA embeddings from aic_data")
+    parser = argparse.ArgumentParser(description="Extract VLA embeddings from aic_data")
+    parser.add_argument("--backend", type=str, default="xvla", choices=["xvla", "pi05"],
+                        help="VLA backend: 'xvla' or 'pi05'")
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Root of LeRobot v3.0 dataset")
-    parser.add_argument("--model_dir", type=str, required=True,
-                        help="Path to XVLA model directory")
+    parser.add_argument("--model_dir", type=str, default="",
+                        help="Path to XVLA model directory (for --backend xvla)")
+    parser.add_argument("--pi05_checkpoint", type=str,
+                        default="/home/yifeng/workspace/pi05_base/pi05_base",
+                        help="Pi0.5 checkpoint dir (for --backend pi05)")
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to save per-episode .pt files")
     parser.add_argument("--camera", type=str, default="center_camera",
@@ -132,13 +137,24 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
 
-    # Load XVLA wrapper
-    vla = XVLAWrapper(
-        model_dir=args.model_dir,
-        device=device,
-        instruction=args.instruction,
-        image_size=args.image_size,
-    )
+    # Load VLA backend
+    if args.backend == "xvla":
+        vla = XVLAWrapper(
+            model_dir=args.model_dir,
+            device=device,
+            instruction=args.instruction,
+            image_size=args.image_size,
+        )
+    elif args.backend == "pi05":
+        from aic_rlt.vla.pi05_backend import Pi05Backend
+        vla = Pi05Backend(
+            checkpoint_dir=args.pi05_checkpoint,
+            device=device,
+            instruction=args.instruction,
+        )
+        logger.info(f"Pi0.5 backend: {vla.num_tokens} tokens x {vla.embed_dim} dim")
+    else:
+        raise ValueError(f"Unknown backend: {args.backend}")
 
     # Collect all parquet files
     data_dir = Path(args.data_dir)
@@ -179,13 +195,38 @@ def main():
                           for f in batch_frames]
 
             batch_embs = []
-            for img_np in batch_imgs:
-                emb = vla.get_embeddings(img_np)   # (num_tokens, 1024)
-                batch_embs.append(emb)
+            if args.backend == "xvla":
+                for img_np in batch_imgs:
+                    emb = vla.get_embeddings(img_np)   # (num_tokens, embed_dim)
+                    batch_embs.append(emb)
+            elif args.backend == "pi05":
+                import jax
+                import jax.numpy as jnp
+                from openpi.models import model as _model
+                for img_np in batch_imgs:
+                    # Build a minimal Pi0.5 observation from the image
+                    img_f = (img_np.astype(np.float32) / 127.5) - 1.0
+                    img_224 = img_f if img_f.shape[:2] == (224, 224) else \
+                        np.array(Image.fromarray(img_np).resize((224, 224)))
+                    if img_224.dtype == np.uint8:
+                        img_224 = (img_224.astype(np.float32) / 127.5) - 1.0
+                    obs = _model.Observation(
+                        images={k: jnp.array(img_224)[None] for k in ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")},
+                        image_masks={k: jnp.ones((1,), dtype=jnp.bool_) for k in ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")},
+                        state=jnp.zeros((1, 32), dtype=jnp.float32),
+                        tokenized_prompt=jnp.zeros((1, 200), dtype=jnp.int32),
+                        tokenized_prompt_mask=jnp.zeros((1, 200), dtype=jnp.bool_),
+                    )
+                    obs = _model.preprocess_observation(None, obs, train=False)
+                    prefix_tokens, _, _ = vla._model_obj.embed_prefix(obs)
+                    # bfloat16 → float32 via JAX
+                    prefix_f32 = prefix_tokens[0].astype(jnp.float32)
+                    emb = torch.from_numpy(np.array(jax.device_get(prefix_f32), dtype=np.float32))
+                    batch_embs.append(emb)
 
             all_embeddings.extend(batch_embs)
 
-            if (batch_start // args.batch_size) % 10 == 0:
+            if (batch_start // args.batch_size) % 5 == 0:
                 logger.info(f"    {batch_start}/{T} frames processed")
 
         embeddings = torch.stack(all_embeddings, dim=0)   # (T, num_tokens, 1024)
