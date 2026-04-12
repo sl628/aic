@@ -186,7 +186,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="RLT Training")
     parser.add_argument(
         "--mode",
-        choices=["pretrain_rl_token", "online_rl", "full"],
+        choices=["pretrain_rl_token", "offline_rl", "online_rl", "full"],
         default="full",
         help="Training phase to run",
     )
@@ -211,6 +211,11 @@ def parse_args():
     parser.add_argument("--hidden_dims", type=int, nargs="+", default=[256, 256])
     parser.add_argument("--rl_token_epochs", type=int, default=50)
     parser.add_argument("--chunk_length", type=int, default=10)
+    # Phase 2 offline RL arguments
+    parser.add_argument("--n_offline_epochs", type=int, default=100,
+                        help="Offline gradient epochs for offline_rl mode")
+    parser.add_argument("--reward_sigma", type=float, default=0.05,
+                        help="Gaussian sigma (meters) for synthetic distance-to-goal reward")
     return parser.parse_args()
 
 
@@ -276,6 +281,53 @@ def main():
         )
         trainer.pretrain_rl_token(demo_dataset)
         trainer.save_checkpoint("phase1_rl_token")
+
+    if args.mode == "offline_rl":
+        # --- Phase 2 (offline): actor-critic training from demo data ---
+        if not args.embeddings_dir:
+            raise ValueError(
+                "--embeddings_dir is required for offline_rl. "
+                "Run scripts/prepare_embeddings.py first."
+            )
+        if not args.load_checkpoint:
+            raise ValueError(
+                "--load_checkpoint is required for offline_rl (Phase 1 checkpoint). "
+                "Run --mode pretrain_rl_token first."
+            )
+
+        vla_embed_dim, num_vla_tokens = _detect_embedding_dims(args.embeddings_dir)
+
+        rl_token_cfg = RLTokenConfig(
+            vla_embed_dim=vla_embed_dim,
+            num_vla_tokens=num_vla_tokens,
+        )
+        actor_critic_cfg = ActorCriticConfig(
+            rl_token_dim=rl_token_cfg.rl_token_dim,
+            action_dim=7,
+            prop_dim=26,
+            chunk_length=args.chunk_length,
+            hidden_dims=args.hidden_dims,
+        )
+        config = RLTConfig(
+            rl_token=rl_token_cfg,
+            actor_critic=actor_critic_cfg,
+            bc_coeff=args.bc_coeff,
+            checkpoint_dir=args.checkpoint_dir,
+        )
+
+        trainer = RLTTrainer(config=config, device=device)
+        trainer.load_checkpoint(args.load_checkpoint)
+
+        demo_dataset = LeRobotEmbeddingDataset(
+            data_dir=args.data_dir,
+            embeddings_dir=args.embeddings_dir,
+            chunk_length=args.chunk_length,
+        )
+        trainer.train_offline(
+            demo_dataset,
+            n_epochs=args.n_offline_epochs,
+            reward_sigma=args.reward_sigma,
+        )
 
     if args.mode in ("online_rl", "full"):
         # --- Phase 2: online RL with live XVLA ---

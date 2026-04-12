@@ -206,6 +206,127 @@ class RLTTrainer:
     # Phase 1: RL Token pretraining
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Phase 2 (Offline): Actor-Critic training on demo data
+    # ------------------------------------------------------------------
+
+    def train_offline(
+        self,
+        demo_dataset: "torch.utils.data.Dataset",
+        n_epochs: int = 100,
+        reward_sigma: float = 0.05,
+    ) -> None:
+        """Offline actor-critic training using demo data with synthetic rewards (TD3+BC).
+
+        Since no simulator is available, rewards are computed from each demo episode's
+        final TCP position (which equals the successful insertion pose for all 100 demos):
+
+            r(t) = exp(-||pos(t) - pos(T)||² / reward_sigma²)
+
+        This gives dense, well-shaped reward: 1.0 at the final frame, decaying
+        exponentially as distance to goal increases (sigma=5cm by default).
+
+        Transitions are pre-computed and stored in the replay buffer, then
+        offline TD3+BC gradient updates are run for n_epochs.
+
+        Args:
+            demo_dataset: LeRobotEmbeddingDataset with _episodes attribute.
+            n_epochs:     Gradient epochs (one epoch ≈ buffer_size / batch_size steps).
+            reward_sigma: Gaussian width for distance-to-goal reward (meters).
+        """
+        logger.info("=== Phase 2 (Offline): Actor-Critic Training with Synthetic Rewards ===")
+
+        # Freeze RL token
+        for p in self.rl_token_model.parameters():
+            p.requires_grad = False
+        self.rl_token_model.eval()
+
+        # Pre-compute z_rl and populate replay buffer episode by episode
+        logger.info("Encoding RL tokens and populating replay buffer ...")
+        self._populate_replay_buffer_from_demos(demo_dataset, reward_sigma)
+        logger.info(f"Replay buffer size: {len(self.replay_buffer)} transitions")
+
+        # Offline gradient updates
+        steps_per_epoch = max(1, len(self.replay_buffer) // self.config.batch_size)
+        n_steps = n_epochs * steps_per_epoch
+        logger.info(
+            f"Offline updates: {n_epochs} epochs × {steps_per_epoch} steps = {n_steps} total"
+        )
+
+        for step in range(n_steps):
+            metrics = self._gradient_update_step()
+
+            if (step + 1) % self.config.log_interval == 0:
+                log_str = f"  offline step={step+1}/{n_steps}"
+                for k, v in metrics.items():
+                    log_str += f"  {k}={v:.4f}"
+                logger.info(log_str)
+
+            if (step + 1) % self.config.save_interval == 0:
+                self.save_checkpoint(f"offline_step_{step+1}")
+
+        logger.info("Offline training complete.")
+        self.save_checkpoint("phase2_offline")
+
+    def _populate_replay_buffer_from_demos(
+        self,
+        demo_dataset: "torch.utils.data.Dataset",
+        reward_sigma: float,
+    ) -> None:
+        """Encode all demo frames with the frozen RL token and add to replay buffer.
+
+        For each episode:
+          - Run rl_token_model.encode() in batches to get z_rl[0..T-1]
+          - Compute r(t) = exp(-||pos(t) - pos(T-1)||² / reward_sigma²)
+          - For each valid chunk start t: add Transition(z_rl[t], prop[t], ...)
+        """
+        C = self.config.actor_critic.chunk_length
+        encode_batch = 64  # frames per GPU batch for encoding
+
+        for ep_idx, ep_data in sorted(demo_dataset._episodes.items()):
+            T = ep_data["T"]
+            props: np.ndarray = ep_data["props"]         # (T, 26)
+            actions: np.ndarray = ep_data["actions"]     # (T, 7)
+            embeddings: torch.Tensor = ep_data["embeddings"]  # (T, num_tokens, embed_dim)
+
+            # Goal = final TCP xyz of this successful episode
+            goal_pos = props[-1, 0:3]  # (3,)
+
+            # Batch-encode all frames → z_rl (T, D_rl)
+            z_rls_list = []
+            for t0 in range(0, T, encode_batch):
+                t1 = min(t0 + encode_batch, T)
+                emb_batch = embeddings[t0:t1].to(self.device)  # (B, N, D)
+                with torch.no_grad():
+                    _, z_rl_batch = self.rl_token_model.encode(emb_batch)  # (B, D_rl)
+                z_rls_list.append(z_rl_batch.cpu().numpy())
+            z_rls = np.concatenate(z_rls_list, axis=0)  # (T, D_rl)
+
+            # Add one transition per valid chunk start
+            n_added = 0
+            for t in range(T - C + 1):
+                pos_t = props[t, 0:3]
+                dist = np.linalg.norm(pos_t - goal_pos)
+                reward = float(np.exp(-(dist ** 2) / (reward_sigma ** 2)))
+
+                action_chunk = actions[t : t + C]          # (C, 7)
+                t_next = min(t + 1, T - 1)
+                done = float(t == T - C)                   # 1.0 at last valid chunk
+
+                self.replay_buffer.add(Transition(
+                    z_rl=z_rls[t],
+                    prop=props[t],
+                    action_chunk=action_chunk,
+                    ref_action_chunk=action_chunk.copy(),  # demo action = reference
+                    reward=reward,
+                    next_z_rl=z_rls[t_next],
+                    next_prop=props[t_next],
+                    done=done,
+                ))
+                n_added += 1
+
+            logger.info(f"  Episode {ep_idx:03d}: {T} frames → {n_added} transitions added")
+
     def pretrain_rl_token(self, demo_dataset: "torch.utils.data.Dataset") -> None:
         """Train RL token encoder-decoder on demonstration data (equation (2)).
 
