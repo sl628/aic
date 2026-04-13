@@ -345,6 +345,13 @@ class AICSpaceMouseTeleop(Teleoperator):
         pass
 
 
+# ---------------------------------------------------------------------------
+# AICCheatCodeTeleop
+# Originally authored by Rocky Shao (Rocky0Shao/IntrinsicAIChallenge).
+# Adapted here: replaced transforms3d private API with scipy, removed
+# duplicate imports, switched quaternion arithmetic to scipy Rotation.
+# ---------------------------------------------------------------------------
+
 @TeleoperatorConfig.register_subclass("aic_cheatcode")
 @dataclass(kw_only=True)
 class AICCheatCodeTeleopConfig(TeleoperatorConfig):
