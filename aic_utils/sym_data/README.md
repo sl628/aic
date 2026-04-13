@@ -24,19 +24,57 @@ Compatible with: RunACT, RunRLT (XVLA/Pi0.5 backends)
 
 Records ground-truth CheatCode trajectories in simulation, then converts to LeRobot format.
 
-### Step 1: Collect raw episodes
+### How CheatCodeDataCollector works
+
+`CheatCodeDataCollector` subclasses `CheatCode` and uses a **move_robot wrapper**
+to record data without modifying the policy itself.
+
+The AIC framework calls `insert_cable(task, get_observation, move_robot, send_feedback)`
+passing `move_robot` as a callback — a function the policy calls whenever it wants
+to send a pose command to the robot. `CheatCodeDataCollector` intercepts this by
+substituting its own wrapper:
+
+```
+CheatCodeDataCollector.insert_cable()
+│
+├── define recording_move_robot(pose):
+│       ├── obs = get_observation()    # snapshot state at this exact moment
+│       ├── steps.append(state, pose)  # record (state, action) pair + images
+│       └── real_move_robot(pose)      # forward to the actual robot controller
+│
+└── super().insert_cable(..., move_robot=recording_move_robot)
+        │   CheatCode runs its approach + insertion loop (~530 steps)
+        │   Each step: reads TF → computes pose → calls recording_move_robot()
+        └── returns success
+```
+
+The wrapper is the only place where both pieces exist simultaneously:
+- **The action** — the pose CheatCode just computed from TF
+- **The state** — what the robot looked like at that exact moment
+
+`CheatCode` never calls `get_observation()` itself (it reads TF directly), so the
+wrapper must fetch it. `CheatCode` has no knowledge of recording — it just calls
+whatever `move_robot` function it was handed.
+
+### Step 1: Generate a randomized config
+
+The default eval environment runs only **3 trials** before stopping. Generate
+a randomized config with as many trials as you need (3 scenarios × N):
+
+```bash
+pixi run python aic_utils/sym_data/generate_data_collection_config.py --episodes_per_scenario 100 --output /tmp/data_collection_config.yaml --seed 42
+```
+
+### Step 2: Collect raw episodes
 
 **Terminal 1** — start the eval container with ground truth TF frames:
 ```bash
-distrobox enter -r aic_eval -- /entrypoint.sh ground_truth:=true start_aic_engine:=true
+distrobox enter -r aic_eval -- /entrypoint.sh ground_truth:=true start_aic_engine:=true "aic_engine_config_file:=/tmp/data_collection_config.yaml"
 ```
 
 **Terminal 2** — run the data collector:
 ```bash
-pixi run ros2 run aic_model aic_model --ros-args \
-    -p use_sim_time:=true \
-    -p policy:=aic_example_policies.ros.CheatCodeDataCollector \
-    -p output_dir:=/home/yifeng/aic_data_raw
+pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true -p policy:=aic_example_policies.ros.CheatCodeDataCollector -p output_dir:=/home/yifeng/aic_data_raw
 ```
 
 Each completed `insert_cable()` call saves one episode to `~/aic_data_raw/`.
