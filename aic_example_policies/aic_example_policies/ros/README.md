@@ -14,8 +14,16 @@ Compatible with: RunACT, RunRLT (XVLA / Pi0.5 backends)
 
 ## Step 1 — Start the eval container with ground truth
 
+The default eval environment runs only **3 trials** before stopping. To collect
+more data, supply a custom `aic_engine` config via `aic_engine_config_file`.
+A ready-made config with 15 trials (3 scenarios × 5 pose variations) is at
+`aic_utils/sym_data/data_collection_config.yaml`.
+
 ```bash
-distrobox enter -r aic_eval -- /entrypoint.sh ground_truth:=true start_aic_engine:=true
+distrobox enter -r aic_eval -- /entrypoint.sh \
+    ground_truth:=true \
+    start_aic_engine:=true \
+    aic_engine_config_file:=/home/yifeng/aic/aic_utils/sym_data/data_collection_config.yaml
 ```
 
 Wait until the terminal shows `Retrying connection to aic_engine...` before
