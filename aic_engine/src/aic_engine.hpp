@@ -391,6 +391,9 @@ class Engine {
   bool skip_model_ready_;
   bool skip_ready_simulator_;
 
+  // Whether to record bag files during trials.
+  bool record_bag_;
+
   // Whether the participant model has been discovered and readied.
   bool model_discovered_;
 

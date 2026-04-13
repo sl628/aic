@@ -33,7 +33,7 @@ Via pixi task (recommended)::
 
 Directly::
 
-    python3 aic_utils/generate_synthetic_data.py \\
+    python3 aic_utils/sym_data/generate_synthetic.py \\
         --output_dir ~/aic_data \\
         --num_episodes 200
 

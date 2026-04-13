@@ -544,17 +544,29 @@ EngineState Engine::initialize() {
   scoring_tier2_->SetGripperFrame(
       node_->get_parameter("gripper_frame_name").as_string());
 
-  // Create output directory for bag files.
-  std::error_code ec;
-  std::filesystem::create_directories(scoring_output_dir_, ec);
-  if (ec) {
-    RCLCPP_ERROR(node_->get_logger(),
-                 "Failed to create bag output directory '%s': %s",
-                 scoring_output_dir_.c_str(), ec.message().c_str());
-    return EngineState::Error;
+  // Read record_bag setting (defaults to true if not present).
+  record_bag_ = true;
+  if (config_["scoring"]["record_bag"]) {
+    record_bag_ = config_["scoring"]["record_bag"].as<bool>();
   }
-  RCLCPP_INFO(node_->get_logger(), "Bag output directory: %s",
-              scoring_output_dir_.c_str());
+  if (!record_bag_) {
+    RCLCPP_INFO(node_->get_logger(),
+                "record_bag is false — bag recording disabled for this run.");
+  }
+
+  if (record_bag_) {
+    // Create output directory for bag files.
+    std::error_code ec;
+    std::filesystem::create_directories(scoring_output_dir_, ec);
+    if (ec) {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "Failed to create bag output directory '%s': %s",
+                   scoring_output_dir_.c_str(), ec.message().c_str());
+      return EngineState::Error;
+    }
+    RCLCPP_INFO(node_->get_logger(), "Bag output directory: %s",
+                scoring_output_dir_.c_str());
+  }
 
   engine_state_ = EngineState::Initialized;
   RCLCPP_INFO(node_->get_logger(),
@@ -1315,6 +1327,13 @@ bool Engine::ready_scoring(const Trial& trial) {
       << std::setfill('0') << std::setw(3) << ms.count();
   const std::string bag_path = oss.str();
 
+  if (!record_bag_) {
+    RCLCPP_INFO(node_->get_logger(),
+                "Bag recording disabled — skipping StartRecording for '%s'.",
+                trial.id.c_str());
+    return true;
+  }
+
   unsigned int max_task_limit = 0;
   for (const auto& task : trial.tasks) {
     if (task.time_limit > max_task_limit) {
@@ -1993,6 +2012,11 @@ bool Engine::spawn_entity(Trial& trial, std::string entity_name,
 
 //==============================================================================
 void Engine::score_trial(TrialScore& score) {
+  if (!record_bag_) {
+    RCLCPP_INFO(node_->get_logger(),
+                "Bag recording disabled — skipping StopRecording and scoring.");
+    return;
+  }
   if (!scoring_tier2_->StopRecording()) {
     RCLCPP_ERROR(node_->get_logger(), "Failed to stop recording.");
     return;

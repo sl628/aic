@@ -172,34 +172,34 @@ class CheatCodeDataCollector(CheatCode):
     ) -> bool:
         episode_id = str(uuid.uuid4())[:8]
         steps: list[dict] = []
-        last_obs: list[Observation] = [None]  # mutable cell for closure
-
         def recording_get_observation() -> Observation:
-            obs = get_observation()
-            last_obs[0] = obs
-            return obs
+            return get_observation()
 
         def recording_move_robot(
             motion_update: MotionUpdate = None,
             joint_motion_update=None,
         ) -> None:
-            obs = last_obs[0]
-            if obs is not None and motion_update is not None:
-                steps.append(
-                    {
-                        "timestamp": time.time(),
-                        "state": _obs_to_state(obs),
-                        "action": _motion_to_action(motion_update),
-                        "images": {
-                            key: _ros_image_to_numpy(
-                                getattr(obs, ros_attr), _IMAGE_SCALE
-                            )
-                            for key, ros_attr in zip(
-                                _CAMERA_KEYS, _CAMERA_ROS_ATTRS
-                            )
-                        },
-                    }
-                )
+            # CheatCode drives purely from TF — it never calls get_observation().
+            # Fetch the observation here so every pose command is paired with
+            # the state the robot was in when that command was issued.
+            if motion_update is not None:
+                obs = get_observation()
+                if obs is not None:
+                    steps.append(
+                        {
+                            "timestamp": time.time(),
+                            "state": _obs_to_state(obs),
+                            "action": _motion_to_action(motion_update),
+                            "images": {
+                                key: _ros_image_to_numpy(
+                                    getattr(obs, ros_attr), _IMAGE_SCALE
+                                )
+                                for key, ros_attr in zip(
+                                    _CAMERA_KEYS, _CAMERA_ROS_ATTRS
+                                )
+                            },
+                        }
+                    )
             move_robot(
                 motion_update=motion_update,
                 joint_motion_update=joint_motion_update,
