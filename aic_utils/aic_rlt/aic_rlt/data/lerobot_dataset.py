@@ -120,10 +120,32 @@ class LeRobotEmbeddingDataset(Dataset):
                 )
                 continue
 
+            # Optional: pre-extracted VLA reference action chunks (T, C, 7).
+            # If present, Phase 2 offline RL will use these as ref_action_chunk
+            # instead of copying demo actions, closing the train/deploy gap.
+            ref_actions = emb_data.get("ref_actions", None)
+            if ref_actions is not None:
+                if ref_actions.shape[0] != T:
+                    logger.warning(
+                        f"Episode {ep_idx}: ref_actions frames ({ref_actions.shape[0]}) "
+                        f"≠ parquet frames ({T}) — dropping ref_actions for this ep"
+                    )
+                    ref_actions = None
+                elif ref_actions.shape[1] != self.chunk_length:
+                    logger.warning(
+                        f"Episode {ep_idx}: ref_actions chunk_length "
+                        f"({ref_actions.shape[1]}) ≠ dataset chunk_length "
+                        f"({self.chunk_length}) — dropping ref_actions"
+                    )
+                    ref_actions = None
+                else:
+                    ref_actions = ref_actions.float().numpy()
+
             self._episodes[ep_idx] = {
                 "props": props,
                 "actions": actions,
                 "embeddings": embeddings,
+                "ref_actions": ref_actions,
                 "T": T,
             }
 

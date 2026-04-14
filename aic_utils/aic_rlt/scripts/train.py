@@ -44,6 +44,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from aic_rlt import RLTConfig, RLTTrainer
+from aic_rlt.trainer import RewardConfig
 from aic_rlt.models.rl_token import RLTokenConfig
 from aic_rlt.models.actor_critic import ActorCriticConfig
 from aic_rlt.data.lerobot_dataset import LeRobotEmbeddingDataset
@@ -221,8 +222,51 @@ def parse_args():
     parser.add_argument("--n_offline_epochs", type=int, default=100,
                         help="Offline gradient epochs for offline_rl mode")
     parser.add_argument("--reward_sigma", type=float, default=0.05,
-                        help="Gaussian sigma (meters) for synthetic distance-to-goal reward")
+                        help="Legacy: Gaussian sigma (m) for distance-to-goal reward")
+    # Structured reward (set --reward_mode structured to activate)
+    parser.add_argument("--reward_mode", choices=["legacy", "structured"],
+                        default="legacy",
+                        help="Offline reward formulation. 'structured' adds "
+                             "orientation + depth + contact + phase bonuses.")
+    parser.add_argument("--reward_sigma_pos", type=float, default=0.03,
+                        help="Structured: position Gaussian width (meters)")
+    parser.add_argument("--w_pos", type=float, default=1.0)
+    parser.add_argument("--w_ori", type=float, default=0.3)
+    parser.add_argument("--w_depth", type=float, default=0.5)
+    parser.add_argument("--w_contact", type=float, default=0.2)
+    parser.add_argument("--w_phase_bonus", type=float, default=1.0)
+    parser.add_argument("--w_success", type=float, default=10.0)
+    parser.add_argument("--port_pos", type=float, nargs=3, default=None,
+                        metavar=("X", "Y", "Z"),
+                        help="Port position in base frame. If omitted, uses "
+                             "per-episode demo endpoint (legacy).")
+    parser.add_argument("--port_quat", type=float, nargs=4, default=None,
+                        metavar=("QX", "QY", "QZ", "QW"),
+                        help="Port orientation quaternion (xyzw).")
+    parser.add_argument("--port_insert_axis", type=int, default=2,
+                        choices=[0, 1, 2],
+                        help="Which port-frame axis points into the port (0=x,1=y,2=z).")
+    parser.add_argument("--insert_depth_m", type=float, default=0.03)
     return parser.parse_args()
+
+
+def _reward_config_from_args(args) -> RewardConfig:
+    """Build a RewardConfig from CLI arguments."""
+    return RewardConfig(
+        mode=args.reward_mode,
+        w_pos=args.w_pos,
+        w_ori=args.w_ori,
+        w_depth=args.w_depth,
+        w_contact=args.w_contact,
+        w_phase_bonus=args.w_phase_bonus,
+        w_success=args.w_success,
+        sigma_pos=(args.reward_sigma_pos
+                   if args.reward_mode == "structured" else args.reward_sigma),
+        port_pos=tuple(args.port_pos) if args.port_pos is not None else None,
+        port_quat=tuple(args.port_quat) if args.port_quat is not None else None,
+        port_insert_axis=args.port_insert_axis,
+        insert_depth_m=args.insert_depth_m,
+    )
 
 
 def _detect_embedding_dims(embeddings_dir: str) -> tuple:
@@ -339,6 +383,7 @@ def main():
             rl_token=rl_token_cfg,
             actor_critic=actor_critic_cfg,
             bc_coeff=args.bc_coeff,
+            reward=_reward_config_from_args(args),
             checkpoint_dir=args.checkpoint_dir,
         )
 
@@ -353,7 +398,8 @@ def main():
         trainer.train_offline(
             demo_dataset,
             n_epochs=args.n_offline_epochs,
-            reward_sigma=args.reward_sigma,
+            # legacy reward_sigma still honored when reward_mode=legacy
+            reward_sigma=(args.reward_sigma if args.reward_mode == "legacy" else None),
         )
 
     if args.mode in ("online_rl", "full"):
