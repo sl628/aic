@@ -75,6 +75,7 @@ from aic_control_interfaces.msg import MotionUpdate, TrajectoryGenerationMode
 from aic_rlt.models.rl_token import RLTokenModel, RLTokenConfig
 from aic_rlt.models.actor_critic import Actor, ActorCriticConfig
 from aic_rlt.vla import create_vla_backend
+from aic_rlt.trainer import DEFAULT_PHASE_PROMPTS, PHASE_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -86,13 +87,10 @@ DEFAULT_PI05_CKPT     = "/home/yifeng/workspace/pi05_base/pi05_base"  # Pi0.5
 DEFAULT_INSTRUCTION   = "Insert SFP cable into NIC port"
 DEFAULT_CHECKPOINT    = ""
 
-# Phase-conditioned prompt defaults. Override via ROS params
-# policy_args.prompt_{approach,align,insert,verify}.
-DEFAULT_PHASE_PROMPTS = {
-    "approach": "move the SFP cable above the NIC port",
-    "align":    "align the SFP connector with the port opening",
-    "insert":   "insert the SFP cable straight into the port",
-    "verify":   "verify the SFP cable is fully seated in the port",
+# Phase-conditioned prompt defaults (from trainer.py shared constants).
+# Override via ROS params policy_args.prompt_{approach,align,insert,verify}.
+_PHASE_PROMPT_DEFAULTS = {
+    name: DEFAULT_PHASE_PROMPTS[i] for i, name in enumerate(PHASE_NAMES)
 }
 
 # Phase-estimator thresholds (must match RewardConfig defaults in trainer).
@@ -137,10 +135,10 @@ class RunRLT(Policy):
             # disables phase switching; the VLA keeps the static instruction.
             ("policy_args.port_pose_xyzquat", []),
             # Per-phase prompts (can be overridden from launch file)
-            ("policy_args.prompt_approach",  DEFAULT_PHASE_PROMPTS["approach"]),
-            ("policy_args.prompt_align",     DEFAULT_PHASE_PROMPTS["align"]),
-            ("policy_args.prompt_insert",    DEFAULT_PHASE_PROMPTS["insert"]),
-            ("policy_args.prompt_verify",    DEFAULT_PHASE_PROMPTS["verify"]),
+            ("policy_args.prompt_approach",  _PHASE_PROMPT_DEFAULTS["approach"]),
+            ("policy_args.prompt_align",     _PHASE_PROMPT_DEFAULTS["align"]),
+            ("policy_args.prompt_insert",    _PHASE_PROMPT_DEFAULTS["insert"]),
+            ("policy_args.prompt_verify",    _PHASE_PROMPT_DEFAULTS["verify"]),
         ]
         for name, default in _params:
             try:

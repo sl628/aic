@@ -141,11 +141,43 @@ class LeRobotEmbeddingDataset(Dataset):
                 else:
                     ref_actions = ref_actions.float().numpy()
 
+            # Phase-conditioned embeddings: dict name→Tensor(T, N, D)
+            phase_embeddings = emb_data.get("phase_embeddings", None)
+            if phase_embeddings is not None:
+                valid = True
+                for pname, pemb in phase_embeddings.items():
+                    if pemb.shape[0] != T:
+                        logger.warning(
+                            f"Episode {ep_idx}: phase_embeddings[{pname}] T "
+                            f"mismatch ({pemb.shape[0]} vs {T}) — dropping"
+                        )
+                        valid = False
+                        break
+                if not valid:
+                    phase_embeddings = None
+
+            phase_ref_actions = emb_data.get("phase_ref_actions", None)
+            if phase_ref_actions is not None:
+                for pname, pref in phase_ref_actions.items():
+                    if pref.shape[0] != T or pref.shape[1] != self.chunk_length:
+                        logger.warning(
+                            f"Episode {ep_idx}: phase_ref_actions[{pname}] "
+                            f"shape mismatch — dropping"
+                        )
+                        phase_ref_actions = None
+                        break
+                if phase_ref_actions is not None:
+                    phase_ref_actions = {
+                        k: v.float().numpy() for k, v in phase_ref_actions.items()
+                    }
+
             self._episodes[ep_idx] = {
                 "props": props,
                 "actions": actions,
                 "embeddings": embeddings,
                 "ref_actions": ref_actions,
+                "phase_embeddings": phase_embeddings,
+                "phase_ref_actions": phase_ref_actions,
                 "T": T,
             }
 

@@ -50,6 +50,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from aic_rlt.vla.xvla_wrapper import XVLAWrapper
+from aic_rlt.trainer import PHASE_NAMES, DEFAULT_PHASE_PROMPTS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,6 +136,10 @@ def parse_args():
                              "offline RL sees the same reference distribution as deploy")
     parser.add_argument("--no_ref_actions", dest="extract_ref_actions",
                         action="store_false")
+    parser.add_argument("--extract_phase_prompts", action="store_true", default=False,
+                        help="Extract embeddings+ref_actions for all 4 phase prompts "
+                             "(approach/align/insert/verify) in addition to the main "
+                             "instruction. Enables phase-matched training. ~4× slower.")
     parser.add_argument("--device", type=str,
                         default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--overwrite", action="store_true",
@@ -267,6 +272,39 @@ def main():
             logger.info(
                 f"  Episode {ep_idx:04d}: ref_actions {tuple(ref_actions.shape)}"
             )
+
+        # Phase-conditioned embeddings + ref_actions (4 prompts × T frames)
+        if args.extract_phase_prompts and args.backend == "xvla":
+            phase_embs = {}   # name → Tensor(T, N, D)
+            phase_refs = {}   # name → Tensor(T, C, 7)
+            for phase_id, phase_name in enumerate(PHASE_NAMES):
+                prompt = DEFAULT_PHASE_PROMPTS[phase_id]
+                vla.set_instruction(prompt)
+                p_embs = []
+                p_refs = []
+                for batch_start in range(0, T, args.batch_size):
+                    batch_frames = frames[batch_start : batch_start + args.batch_size]
+                    batch_imgs = [decode_image(f["image_bytes"], args.image_size)
+                                  for f in batch_frames]
+                    for img_np, frame in zip(batch_imgs, batch_frames):
+                        p_embs.append(vla.get_embeddings(img_np))
+                        if want_ref:
+                            p_refs.append(vla.get_action_chunk(img_np, frame["prop"]))
+                phase_embs[phase_name] = torch.stack(p_embs, dim=0)
+                if want_ref and p_refs:
+                    phase_refs[phase_name] = torch.from_numpy(
+                        np.stack(p_refs, axis=0)
+                    ).float()
+                logger.info(
+                    f"  Episode {ep_idx:04d}: phase '{phase_name}' embeddings extracted"
+                )
+            # Restore default instruction
+            vla.set_instruction(args.instruction)
+            out_blob["phase_embeddings"] = phase_embs
+            out_blob["phase_prompts"] = list(DEFAULT_PHASE_PROMPTS)
+            if phase_refs:
+                out_blob["phase_ref_actions"] = phase_refs
+
         torch.save(out_blob, out_path)
         logger.info(f"  Episode {ep_idx:04d}: saved {embeddings.shape} → {out_path}")
 
