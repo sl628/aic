@@ -121,6 +121,62 @@ def ee6d_to_quat_xyz(ee6d: np.ndarray) -> tuple:
     return xyz, quat
 
 
+def _gram_schmidt_r1r2(r1: np.ndarray, r2: np.ndarray):
+    """Orthonormalize two column vectors via Gram-Schmidt."""
+    r1 = r1.astype(np.float64)
+    r2 = r2.astype(np.float64)
+    r1 = r1 / (np.linalg.norm(r1) + 1e-8)
+    r2 = r2 - np.dot(r2, r1) * r1
+    r2 = r2 / (np.linalg.norm(r2) + 1e-8)
+    return r1.astype(np.float32), r2.astype(np.float32)
+
+
+def ee6d_to_xyz_rot6d(ee6d: np.ndarray) -> np.ndarray:
+    """Extract [xyz, r1, r2] from XVLA ee6d (20D) → 9D action.
+
+    Returns:
+        (9,) float32 — [x, y, z, r1x, r1y, r1z, r2x, r2y, r2z]
+    """
+    xyz = ee6d[0:3].astype(np.float32)
+    r1, r2 = _gram_schmidt_r1r2(ee6d[3:6], ee6d[6:9])
+    return np.concatenate([xyz, r1, r2])
+
+
+def rot6d_to_quat(rot6d: np.ndarray) -> np.ndarray:
+    """6D rotation [r1(3), r2(3)] → quaternion [qx, qy, qz, qw]."""
+    import transforms3d.quaternions as tq
+    r1, r2 = _gram_schmidt_r1r2(rot6d[0:3], rot6d[3:6])
+    r3 = np.cross(r1, r2).astype(np.float64)
+    R = np.stack([r1.astype(np.float64), r2.astype(np.float64), r3], axis=1)
+    q_wxyz = tq.mat2quat(R)
+    return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=np.float32)
+
+
+def quat_to_rot6d(quat: np.ndarray) -> np.ndarray:
+    """Quaternion [qx, qy, qz, qw] → 6D rotation [r1(3), r2(3)]."""
+    import transforms3d.quaternions as tq
+    qw, qx, qy, qz = float(quat[3]), float(quat[0]), float(quat[1]), float(quat[2])
+    R = tq.quat2mat([qw, qx, qy, qz])
+    return np.concatenate([R[:, 0], R[:, 1]]).astype(np.float32)
+
+
+def quat_actions_to_rot6d(actions: np.ndarray) -> np.ndarray:
+    """Batch convert actions from 7D [xyz, quat] → 9D [xyz, r1, r2].
+
+    Args:
+        actions: (..., 7)
+    Returns:
+        (..., 9)
+    """
+    shape = actions.shape[:-1]
+    flat = actions.reshape(-1, 7)
+    out = np.zeros((flat.shape[0], 9), dtype=np.float32)
+    out[:, 0:3] = flat[:, 0:3]
+    for i in range(flat.shape[0]):
+        out[i, 3:9] = quat_to_rot6d(flat[i, 3:7])
+    return out.reshape(*shape, 9)
+
+
 # ---------------------------------------------------------------------------
 # XVLA Wrapper
 # ---------------------------------------------------------------------------
@@ -252,11 +308,9 @@ class XVLAWrapper:
         actions = self.policy._get_action_chunk(batch)
         actions_np = actions.squeeze(0).cpu().numpy()   # (chunk_size, 20)
 
-        # Take first chunk_length steps and convert ee6d → (xyz, quat)
-        result = np.zeros((self.chunk_length, 7), dtype=np.float32)
+        # Take first chunk_length steps and extract [xyz, r1, r2] (9D)
+        result = np.zeros((self.chunk_length, 9), dtype=np.float32)
         n = min(self.chunk_length, len(actions_np))
         for i in range(n):
-            xyz, quat = ee6d_to_quat_xyz(actions_np[i])
-            result[i, 0:3] = xyz
-            result[i, 3:7] = quat
+            result[i] = ee6d_to_xyz_rot6d(actions_np[i])
         return result

@@ -50,8 +50,8 @@ class ActorCriticConfig:
     rl_token_dim: int = 2048
     # Proprioceptive state dimension (TCP pose 7 + TCP vel 6 + TCP error 6 + joints 7 = 26)
     prop_dim: int = 26
-    # Action dimension (6D velocity delta + gripper = 7)
-    action_dim: int = 7
+    # Action dimension: xyz(3) + 6D rotation r1,r2(6) = 9
+    action_dim: int = 9
     # Action chunk length C
     chunk_length: int = 10
     # Hidden layer sizes for actor and critic

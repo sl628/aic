@@ -209,7 +209,7 @@ def main():
 
         T = len(frames)
         all_embeddings = []
-        all_ref_actions = []  # (T, chunk_length, 7) for xvla when extract_ref_actions
+        all_ref_actions = []  # (T, chunk_length, 9) for xvla when extract_ref_actions
         want_ref = args.extract_ref_actions and args.backend == "xvla"
         if args.extract_ref_actions and args.backend != "xvla":
             logger.warning(

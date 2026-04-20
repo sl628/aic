@@ -36,6 +36,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,7 +104,8 @@ class LeRobotEmbeddingDataset(Dataset):
             T = len(rows)
 
             props = np.stack([r["prop"] for r in rows])     # (T, 26)
-            actions = np.stack([r["action"] for r in rows]) # (T, 7)
+            actions_quat = np.stack([r["action"] for r in rows])  # (T, 7)
+            actions = quat_actions_to_rot6d(actions_quat)         # (T, 9)
 
             # Load pre-extracted embeddings
             emb_path = self.embeddings_dir / f"episode_{ep_idx:04d}.pt"
@@ -139,7 +142,11 @@ class LeRobotEmbeddingDataset(Dataset):
                     )
                     ref_actions = None
                 else:
-                    ref_actions = ref_actions.float().numpy()
+                    ref_np = ref_actions.float().numpy()
+                    # Convert 7D quat ref_actions → 9D rot6d if needed
+                    if ref_np.shape[-1] == 7:
+                        ref_np = quat_actions_to_rot6d(ref_np)
+                    ref_actions = ref_np
 
             # Phase-conditioned embeddings: dict name→Tensor(T, N, D)
             phase_embeddings = emb_data.get("phase_embeddings", None)
@@ -168,7 +175,9 @@ class LeRobotEmbeddingDataset(Dataset):
                         break
                 if phase_ref_actions is not None:
                     phase_ref_actions = {
-                        k: v.float().numpy() for k, v in phase_ref_actions.items()
+                        k: quat_actions_to_rot6d(v.float().numpy())
+                        if v.shape[-1] == 7 else v.float().numpy()
+                        for k, v in phase_ref_actions.items()
                     }
 
             self._episodes[ep_idx] = {

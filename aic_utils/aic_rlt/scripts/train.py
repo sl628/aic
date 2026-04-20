@@ -81,7 +81,7 @@ def load_vla(model_path: str, device: torch.device):
         def __init__(self):
             self.embed_dim = 7848
             self.num_tokens = 540
-            self.action_dim = 7
+            self.action_dim = 9
             self.chunk_length = 10
 
         def get_embeddings(self, obs) -> torch.Tensor:
@@ -247,7 +247,21 @@ def parse_args():
                         choices=[0, 1, 2],
                         help="Which port-frame axis points into the port (0=x,1=y,2=z).")
     parser.add_argument("--insert_depth_m", type=float, default=0.03)
+    # Wandb
+    parser.add_argument("--wandb", action="store_true", help="Enable wandb logging")
+    parser.add_argument("--wandb_project", type=str, default="aic-rlt")
+    parser.add_argument("--wandb_run_name", type=str, default=None)
     return parser.parse_args()
+
+
+def _wandb_kwargs(args) -> dict:
+    if not args.wandb:
+        return {}
+    return dict(
+        wandb_enabled=True,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_run_name,
+    )
 
 
 def _reward_config_from_args(args) -> RewardConfig:
@@ -325,7 +339,7 @@ def main():
         )
         actor_critic_cfg = ActorCriticConfig(
             rl_token_dim=rl_token_cfg.rl_token_dim,
-            action_dim=7,
+            action_dim=9,
             prop_dim=26,
             chunk_length=args.chunk_length,
             hidden_dims=args.hidden_dims,
@@ -338,6 +352,7 @@ def main():
             total_env_steps=args.total_env_steps,
             rl_token_epochs=args.rl_token_epochs,
             checkpoint_dir=args.checkpoint_dir,
+            **_wandb_kwargs(args),
         )
 
         trainer = RLTTrainer(config=config, device=device)
@@ -374,7 +389,7 @@ def main():
         )
         actor_critic_cfg = ActorCriticConfig(
             rl_token_dim=rl_token_cfg.rl_token_dim,
-            action_dim=7,
+            action_dim=9,
             prop_dim=26,
             chunk_length=args.chunk_length,
             hidden_dims=args.hidden_dims,
@@ -385,6 +400,7 @@ def main():
             bc_coeff=args.bc_coeff,
             reward=_reward_config_from_args(args),
             checkpoint_dir=args.checkpoint_dir,
+            **_wandb_kwargs(args),
         )
 
         trainer = RLTTrainer(config=config, device=device)
@@ -430,7 +446,7 @@ def main():
         )
         actor_critic_cfg = ActorCriticConfig(
             rl_token_dim=rl_token_cfg.rl_token_dim,
-            action_dim=7,
+            action_dim=9,
             prop_dim=26,
             chunk_length=args.chunk_length,
             hidden_dims=args.hidden_dims,
@@ -442,6 +458,7 @@ def main():
             n_warmup_steps=args.n_warmup_steps,
             total_env_steps=args.total_env_steps,
             checkpoint_dir=args.checkpoint_dir,
+            **_wandb_kwargs(args),
         )
 
         env = AICEnvWrapper(prop_dim=actor_critic_cfg.prop_dim)
