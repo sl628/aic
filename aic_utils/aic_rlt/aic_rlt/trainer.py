@@ -172,6 +172,11 @@ class RLTConfig:
     # ---- Reward shaping (offline RL) ----
     reward: RewardConfig = field(default_factory=RewardConfig)
 
+    # ---- Wandb ----
+    wandb_enabled: bool = False
+    wandb_project: str = "aic-rlt"
+    wandb_run_name: Optional[str] = None
+
     # ---- Logging / Saving ----
     log_interval: int = 100   # gradient steps
     save_interval: int = 1000  # gradient steps
@@ -389,6 +394,29 @@ class RLTTrainer:
         self._checkpoint_dir = Path(config.checkpoint_dir)
         self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+        self._wandb = None
+        if config.wandb_enabled:
+            import wandb
+            self._wandb = wandb
+            wandb.init(
+                project=config.wandb_project,
+                name=config.wandb_run_name,
+                config={
+                    "rl_token_dim": config.rl_token.rl_token_dim,
+                    "vla_embed_dim": config.rl_token.vla_embed_dim,
+                    "action_dim": config.actor_critic.action_dim,
+                    "chunk_length": config.actor_critic.chunk_length,
+                    "batch_size": config.batch_size,
+                    "gamma": config.gamma,
+                    "bc_coeff": config.bc_coeff,
+                    "actor_lr": config.actor_lr,
+                    "critic_lr": config.critic_lr,
+                    "reward_mode": config.reward.mode,
+                    "replay_buffer_capacity": config.replay_buffer_capacity,
+                },
+            )
+            logger.info("Wandb initialized: project=%s", config.wandb_project)
+
     # ------------------------------------------------------------------
     # Phase 1: RL Token pretraining
     # ------------------------------------------------------------------
@@ -441,6 +469,8 @@ class RLTTrainer:
         logger.info("Encoding RL tokens and populating replay buffer ...")
         self._populate_replay_buffer_from_demos(demo_dataset)
         logger.info(f"Replay buffer size: {len(self.replay_buffer)} transitions")
+        if self._wandb:
+            self._wandb.log({"phase2/replay_buffer_size": len(self.replay_buffer)})
 
         # CSV logging for Phase 2
         log_dir = self._checkpoint_dir / "logs"
@@ -468,6 +498,13 @@ class RLTTrainer:
                     c_loss = metrics.get("critic_loss", 0.0)
                     a_loss = metrics.get("actor_loss", 0.0)
                     f.write(f"{step+1},{c_loss:.6f},{a_loss:.6f}\n")
+                if self._wandb:
+                    self._wandb.log({
+                        "phase2/step": step + 1,
+                        "phase2/critic_loss": c_loss,
+                        "phase2/actor_loss": a_loss,
+                        "phase2/epoch": (step + 1) / steps_per_epoch,
+                    }, step=step + 1)
 
             if (step + 1) % self.config.save_interval == 0:
                 self.save_checkpoint(f"offline_step_{step+1}")
@@ -736,6 +773,11 @@ class RLTTrainer:
             logger.info(f"  RL Token epoch {epoch + 1}/{self.config.rl_token_epochs}  loss={avg_loss:.4f}")
             with open(csv_path, "a") as f:
                 f.write(f"{epoch + 1},{avg_loss:.6f}\n")
+            if self._wandb:
+                self._wandb.log({
+                    "phase1/epoch": epoch + 1,
+                    "phase1/recon_loss": avg_loss,
+                }, step=epoch + 1)
 
         # Freeze RL token for online RL
         for p in self.rl_token_model.parameters():
@@ -988,10 +1030,23 @@ class RLTTrainer:
     def load_checkpoint(self, path: str) -> None:
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.rl_token_model.load_state_dict(ckpt["rl_token_model"])
-        self.actor.load_state_dict(ckpt["actor"])
-        self.critic.load_state_dict(ckpt["critic"])
-        self.critic_target.load_state_dict(ckpt["critic_target"])
-        self.actor_optimizer.load_state_dict(ckpt["actor_optimizer"])
-        self.critic_optimizer.load_state_dict(ckpt["critic_optimizer"])
+        # Actor/critic may have different action_dim than checkpoint (e.g.
+        # 7D quat checkpoint loaded into 9D rot6d model). Load what fits,
+        # skip what doesn't — actor/critic will be retrained from scratch.
+        for name, model, opt in [
+            ("actor", self.actor, self.actor_optimizer),
+            ("critic", self.critic, self.critic_optimizer),
+            ("critic_target", self.critic_target, None),
+        ]:
+            if name in ckpt:
+                try:
+                    model.load_state_dict(ckpt[name])
+                    if opt and f"{name}_optimizer" in ckpt:
+                        opt.load_state_dict(ckpt[f"{name}_optimizer"])
+                except RuntimeError as e:
+                    logger.warning(
+                        "Skipping %s weights from checkpoint (shape mismatch, "
+                        "likely action_dim change): %s", name, e,
+                    )
         self._total_gradient_steps = ckpt.get("total_gradient_steps", 0)
         logger.info(f"Checkpoint loaded ← {path}")

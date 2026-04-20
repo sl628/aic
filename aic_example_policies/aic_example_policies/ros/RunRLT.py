@@ -112,8 +112,8 @@ class RunRLT(Policy):
 
     # Action chunk length C (must match training)
     CHUNK_LENGTH: int = 10
-    # Action dimension: target TCP pose (x,y,z,qx,qy,qz,qw)
-    ACTION_DIM: int = 7
+    # Action dimension: target TCP pose xyz(3) + 6D rotation r1,r2(6) = 9
+    ACTION_DIM: int = 9
     # Proprioceptive state dimension
     PROP_DIM: int = 26
 
@@ -398,20 +398,23 @@ class RunRLT(Policy):
             self.get_logger().warn(f"set_instruction failed on phase={phase}: {e}")
 
     def _action_to_motion_update(self, action: np.ndarray) -> MotionUpdate:
-        """Convert a 7-dim TCP pose action to a MotionUpdate (Cartesian position target).
+        """Convert a 9-dim action [xyz, r1, r2] to a MotionUpdate.
 
-        Action semantics (from dataset / actor output):
+        Action semantics (from actor output):
             action[0:3] — target TCP position (x, y, z) in base_link frame
-            action[3:7] — target TCP orientation (qx, qy, qz, qw)
+            action[3:9] — 6D rotation: r1(3) + r2(3), first two columns of R
         """
+        from aic_rlt.vla.xvla_wrapper import rot6d_to_quat
+        quat = rot6d_to_quat(action[3:9])  # [qx, qy, qz, qw]
+
         motion_update = MotionUpdate()
         motion_update.header.frame_id = "base_link"
         motion_update.header.stamp = self.get_clock().now().to_msg()
         motion_update.pose = Pose(
             position=Point(x=float(action[0]), y=float(action[1]), z=float(action[2])),
             orientation=Quaternion(
-                x=float(action[3]), y=float(action[4]),
-                z=float(action[5]), w=float(action[6]),
+                x=float(quat[0]), y=float(quat[1]),
+                z=float(quat[2]), w=float(quat[3]),
             ),
         )
         motion_update.target_stiffness = np.diag(
