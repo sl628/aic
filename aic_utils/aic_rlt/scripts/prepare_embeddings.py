@@ -377,6 +377,18 @@ def main():
         torch.save(out_blob, out_path)
         logger.info(f"  Episode {ep_idx:04d}: saved {embeddings.shape} → {out_path}")
 
+        # Free JAX compilation/trace caches between episodes. Without this,
+        # the JIT cache grows monotonically and eventually OOMs on GPUs with
+        # tight memory headroom (observed at ep 5 on a 12GB Titan Xp with
+        # XLA_PYTHON_CLIENT_MEM_FRACTION=0.92). Safe: only clears caches,
+        # not model weights.
+        if args.backend == "pi05":
+            try:
+                import jax
+                jax.clear_caches()
+            except Exception as e:
+                logger.warning(f"jax.clear_caches() failed: {e}")
+
     logger.info("Embedding extraction complete.")
 
 
