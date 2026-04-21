@@ -26,7 +26,9 @@ an episode. The dataset yields:
         "prop":           Tensor(26,),
         "action_chunk":   Tensor(chunk_length, action_dim),
     }
-action_dim depends on backend: 9 (xvla rot6d) or 7 (pi05 joint-space).
+action_dim is 9 (3D xyz + 6D rot6d) for both backends today (xvla-native TCP,
+pi05-as-feature-extractor with aic demo actions as BC targets). Keep action_dim
+parametric in case a future backend brings its own action space.
 """
 
 import logging
@@ -110,11 +112,12 @@ class LeRobotEmbeddingDataset(Dataset):
 
             props = np.stack([r["prop"] for r in rows])     # (T, 26)
             actions_raw = np.stack([r["action"] for r in rows])  # (T, 7) aic-native TCP+quat
-            # aic's demo actions are 7D TCP (xyz+quat). xvla training wants 9D rot6d;
-            # pi05 training wants pi0.5's 7D joint-space (supplied via ref_actions).
-            # Only convert when raw is 7D-TCP-quat AND target is 9D-rot6d (xvla path).
+            # aic's demo actions are 7D TCP (xyz+quat). Training targets are 9D rot6d
+            # for both the xvla path (xvla is TCP-native) and the pi05 Option-B path
+            # (pi0.5 is feature-extractor only; BC targets come from aic demos, same
+            # as xvla). Only run the conversion when raw is 7D-TCP-quat → 9D-rot6d.
             if actions_raw.shape[-1] == 7 and self.action_dim == 9:
-                from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
+                from aic_rlt.vla._rotation import quat_actions_to_rot6d
                 actions = quat_actions_to_rot6d(actions_raw)   # (T, 9)
             else:
                 actions = actions_raw                          # unchanged
@@ -159,7 +162,7 @@ class LeRobotEmbeddingDataset(Dataset):
                     # actor expects (xvla path). pi05 stores 7D joint ref_actions
                     # and wants them used as-is.
                     if ref_np.shape[-1] == 7 and self.action_dim == 9:
-                        from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
+                        from aic_rlt.vla._rotation import quat_actions_to_rot6d
                         ref_np = quat_actions_to_rot6d(ref_np)
                     ref_actions = ref_np
 
@@ -192,7 +195,7 @@ class LeRobotEmbeddingDataset(Dataset):
                     def _maybe_convert(v):
                         arr = v.float().numpy()
                         if arr.shape[-1] == 7 and self.action_dim == 9:
-                            from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
+                            from aic_rlt.vla._rotation import quat_actions_to_rot6d
                             return quat_actions_to_rot6d(arr)
                         return arr
                     phase_ref_actions = {k: _maybe_convert(v) for k, v in phase_ref_actions.items()}
