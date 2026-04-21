@@ -37,7 +37,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
+# quat_actions_to_rot6d is imported lazily where used (xvla-specific rotation
+# conversion path). This lets pi05-only training runs avoid pulling in xvla's
+# dependencies (e.g. the lerobot xvla policy, which isn't present in openpi's venv).
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,7 @@ class LeRobotEmbeddingDataset(Dataset):
             # pi05 training wants pi0.5's 7D joint-space (supplied via ref_actions).
             # Only convert when raw is 7D-TCP-quat AND target is 9D-rot6d (xvla path).
             if actions_raw.shape[-1] == 7 and self.action_dim == 9:
+                from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
                 actions = quat_actions_to_rot6d(actions_raw)   # (T, 9)
             else:
                 actions = actions_raw                          # unchanged
@@ -156,6 +159,7 @@ class LeRobotEmbeddingDataset(Dataset):
                     # actor expects (xvla path). pi05 stores 7D joint ref_actions
                     # and wants them used as-is.
                     if ref_np.shape[-1] == 7 and self.action_dim == 9:
+                        from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
                         ref_np = quat_actions_to_rot6d(ref_np)
                     ref_actions = ref_np
 
@@ -188,6 +192,7 @@ class LeRobotEmbeddingDataset(Dataset):
                     def _maybe_convert(v):
                         arr = v.float().numpy()
                         if arr.shape[-1] == 7 and self.action_dim == 9:
+                            from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
                             return quat_actions_to_rot6d(arr)
                         return arr
                     phase_ref_actions = {k: _maybe_convert(v) for k, v in phase_ref_actions.items()}
