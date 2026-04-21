@@ -180,11 +180,16 @@ def parse_args():
                         help="Resize images to this size (default: 256)")
     parser.add_argument("--chunk_length", type=int, default=10,
                         help="VLA reference action chunk length")
-    parser.add_argument("--extract_ref_actions", action="store_true", default=True,
-                        help="Also extract per-frame VLA action chunks so Phase 2 "
-                             "offline RL sees the same reference distribution as deploy")
+    # Default: xvla extracts ref_actions (its native TCP outputs match aic demos);
+    # pi05 does NOT (Option B — pi0.5 as embedding-only feature extractor; its
+    # joint-space predictions are OOD for aic's workspace and not useful as BC).
+    parser.add_argument("--extract_ref_actions", dest="extract_ref_actions",
+                        action="store_true", default=None,
+                        help="Force-on per-frame VLA action chunk extraction. "
+                             "Defaults: xvla=on, pi05=off.")
     parser.add_argument("--no_ref_actions", dest="extract_ref_actions",
-                        action="store_false")
+                        action="store_false",
+                        help="Force-off ref_actions regardless of backend.")
     parser.add_argument("--extract_phase_prompts", action="store_true", default=False,
                         help="Extract embeddings+ref_actions for all 4 phase prompts "
                              "(approach/align/insert/verify) in addition to the main "
@@ -200,6 +205,10 @@ def parse_args():
 
 def main():
     args = parse_args()
+    # Resolve per-backend default for extract_ref_actions.
+    # None = user didn't specify; pick the right default per backend.
+    if args.extract_ref_actions is None:
+        args.extract_ref_actions = (args.backend == "xvla")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
@@ -297,11 +306,15 @@ def main():
                         joints=joints, gripper=gripper,
                         base_rgb=base_img, wrist_rgb=wrist_img,
                     )
-                    emb_t, ref = vla.get_embeddings_and_actions(backend_obs)
-                    # emb_t: (1, N, D) torch on device → strip batch dim, to CPU
-                    batch_embs.append(emb_t.squeeze(0).cpu())
                     if want_ref:
+                        # Slow path: run the full forward pass (embed + denoise).
+                        emb_t, ref = vla.get_embeddings_and_actions(backend_obs)
+                        batch_embs.append(emb_t.squeeze(0).cpu())
                         all_ref_actions.append(ref)                       # (C, 7)
+                    else:
+                        # Fast path: Option B — embeddings only, skip denoise.
+                        emb_t = vla.get_embeddings(backend_obs)
+                        batch_embs.append(emb_t.squeeze(0).cpu())
 
             all_embeddings.extend(batch_embs)
 

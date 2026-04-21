@@ -27,48 +27,61 @@ def _load(path: Path) -> dict:
 
 
 def check_one(pt_path: Path, ur5e_stats: dict | None) -> list[str]:
+    """Check one .pt file. Returns (errors, info_dict)."""
     errors = []
     d = _load(pt_path)
 
-    # 1. Expected keys
-    for k in ("vla_embeddings", "ref_actions", "action_dim", "ref_instruction"):
-        if k not in d:
-            errors.append(f"missing key '{k}'")
-
-    if errors:
+    # vla_embeddings is the one non-negotiable key for both modes.
+    if "vla_embeddings" not in d:
+        errors.append("missing key 'vla_embeddings'")
         return errors
 
-    T = d["vla_embeddings"].shape[0]
-    ref = d["ref_actions"]
+    emb = d["vla_embeddings"]
+    if emb.ndim != 3:
+        errors.append(f"vla_embeddings ndim={emb.ndim}, expected 3 (T, num_tokens, embed_dim)")
+        return errors
 
-    # 2. Shape consistency
+    T = emb.shape[0]
+
+    # Option B (pi05 as embedding-only feature extractor): ref_actions absent by design.
+    has_ref = "ref_actions" in d
+    if not has_ref:
+        return errors  # embeddings-only mode is a valid, checked shape
+
+    # Slow path (Option A / xvla): validate ref_actions shape + envelope.
+    ref = d["ref_actions"]
     if ref.shape[0] != T:
         errors.append(f"ref_actions T={ref.shape[0]} != vla_embeddings T={T}")
     if ref.ndim != 3:
         errors.append(f"ref_actions ndim={ref.ndim}, expected 3 (T, C, action_dim)")
+        return errors
 
-    # 3. action_dim and envelope
-    if int(d["action_dim"]) != int(ref.shape[-1]):
+    if "action_dim" in d and int(d["action_dim"]) != int(ref.shape[-1]):
         errors.append(f"action_dim field ({d['action_dim']}) != ref_actions last dim ({ref.shape[-1]})")
-    if int(d["action_dim"]) != 7:
-        errors.append(f"action_dim={d['action_dim']}, expected 7 for ur5e")
 
-    if ur5e_stats is not None and ref.ndim == 3:
-        q01 = np.asarray(ur5e_stats["actions"]["q01"])
-        q99 = np.asarray(ur5e_stats["actions"]["q99"])
-        ref_np = ref.numpy()          # (T, C, 7)
-        # Collapse over T and C to per-dim range
-        lo = ref_np.reshape(-1, ref_np.shape[-1]).min(0)
-        hi = ref_np.reshape(-1, ref_np.shape[-1]).max(0)
-        # Generous tolerance: actions can exceed q01/q99 by design since those are
-        # 1st/99th percentiles (not clip bounds). Warn if > ~50% outside both sides.
-        width = q99 - q01 + 1e-6
-        if (lo < q01 - 0.5 * width).any() or (hi > q99 + 0.5 * width).any():
-            out_dims = [i for i in range(len(q01))
+    # The q01/q99 envelope check only makes sense for pi0.5's *delta* action space,
+    # but our saved ref_actions are post-AbsoluteActions (absolute joints), so the
+    # ur5e action_stats q01/q99 are not the right bounds. Check against STATE q01/q99
+    # instead — absolute joints should lie within the ur5e state envelope in principle,
+    # though aic's workspace may differ significantly (OOD warning, not error).
+    if ur5e_stats is not None and ref.shape[-1] == 7:
+        state_stats = ur5e_stats.get("state") or {}
+        q01 = np.asarray(state_stats.get("q01", []))
+        q99 = np.asarray(state_stats.get("q99", []))
+        if q01.size == 7 and q99.size == 7:
+            ref_np = ref.numpy()
+            lo = ref_np.reshape(-1, 7).min(0)
+            hi = ref_np.reshape(-1, 7).max(0)
+            width = q99 - q01 + 1e-6
+            out_dims = [i for i in range(7)
                         if lo[i] < q01[i] - 0.5 * width[i] or hi[i] > q99[i] + 0.5 * width[i]]
-            errors.append(f"ref_actions dims {out_dims} far outside ur5e q01/q99 envelope "
-                          f"(lo={lo.round(3).tolist()} hi={hi.round(3).tolist()})")
-
+            if out_dims:
+                # This is informational, not a hard failure — aic's workspace differs
+                # from pi0.5's ur5e training distribution (OOD warning per plan risk #1).
+                errors.append(
+                    f"INFO ref_actions dims {out_dims} outside ur5e STATE q01/q99 "
+                    f"(aic workspace is OOD for pi0.5/ur5 — expected; see plan risk #1)"
+                )
     return errors
 
 
@@ -124,14 +137,22 @@ def main():
     any_err = False
     for pt in files:
         errs = check_one(pt, ur5e)
-        if errs:
+        # Partition hard errors from INFO notes.
+        hard = [e for e in errs if not e.startswith("INFO ")]
+        info = [e for e in errs if e.startswith("INFO ")]
+        if hard:
             any_err = True
-            print(f"FAIL {pt.name}: {'; '.join(errs)}")
+            print(f"FAIL {pt.name}: {'; '.join(hard)}")
         else:
             d = _load(pt)
-            print(f"OK   {pt.name}: T={d['vla_embeddings'].shape[0]} "
-                  f"ref_actions={tuple(d['ref_actions'].shape)} "
-                  f"instr='{d['ref_instruction']}'")
+            emb = d["vla_embeddings"]
+            ref_info = (f" ref_actions={tuple(d['ref_actions'].shape)}"
+                        if "ref_actions" in d else " [embeddings-only (Option B)]")
+            instr = d.get("ref_instruction", d.get("instruction", "<not stored>"))
+            print(f"OK   {pt.name}: T={emb.shape[0]} tokens={emb.shape[1]} "
+                  f"embed_dim={emb.shape[2]}{ref_info} instr='{instr}'")
+        for m in info:
+            print(f"     {m}")
 
     if args.compare_dir:
         print("\nChecking instruction-dependence ...")

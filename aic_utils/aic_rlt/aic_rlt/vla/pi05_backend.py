@@ -273,15 +273,22 @@ class Pi05Backend(VLABackend):
             "prompt": self._instruction,
         }
 
-    def _run_forward_with_embeddings(self, obs) -> tuple[np.ndarray, np.ndarray]:
-        """Run pi0.5 forward pass → (prefix_embeddings, actions).
+    def _run_forward_with_embeddings(
+        self, obs, *, want_actions: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Run pi0.5 forward pass → (prefix_embeddings, actions_or_None).
 
         `obs` may be a ROS Observation (online path) OR an already-built UR5Inputs
         dict (offline extraction path, constructed via frame_to_backend_input).
 
+        When ``want_actions=False``, skips the ``sample_actions`` flow-matching
+        denoise loop entirely — ~2× faster and the right choice for
+        feature-extractor-only usage (Option B: pi0.5 provides embeddings,
+        BC targets come from demos).
+
         Returns:
             prefix_embeddings: (N, D_vla) float32 numpy
-            actions: (action_horizon, action_dim) float32 numpy
+            actions: (action_horizon, action_dim) float32 numpy, or None if not requested
         """
         import jax
         import jax.numpy as jnp
@@ -304,6 +311,9 @@ class Pi05Backend(VLABackend):
         prefix_tokens, _, _ = self._model_obj.embed_prefix(observation)
         prefix_f32 = prefix_tokens[0].astype(jnp.float32)
         prefix_embeds = np.array(jax.device_get(prefix_f32), dtype=np.float32)
+
+        if not want_actions:
+            return prefix_embeds, None
 
         # Get actions via flow matching
         rng = jax.random.key(0)
@@ -334,8 +344,8 @@ class Pi05Backend(VLABackend):
             self._instruction = instruction
 
     def get_embeddings(self, obs) -> torch.Tensor:
-        """(1, num_tokens, embed_dim) on device."""
-        prefix_embeds, _ = self._run_forward_with_embeddings(obs)
+        """(1, num_tokens, embed_dim) on device. Skips the denoise loop."""
+        prefix_embeds, _ = self._run_forward_with_embeddings(obs, want_actions=False)
         return torch.from_numpy(prefix_embeds).unsqueeze(0).to(self.device)
 
     def get_action_chunk(self, obs) -> np.ndarray:
