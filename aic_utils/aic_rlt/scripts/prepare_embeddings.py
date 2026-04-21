@@ -322,12 +322,20 @@ def main():
                 logger.info(f"    {batch_start}/{T} frames processed")
 
         embeddings = torch.stack(all_embeddings, dim=0)   # (T, num_tokens, D)
-        out_blob = {"vla_embeddings": embeddings}
+        out_blob = {
+            "vla_embeddings": embeddings,
+            # Always record which instruction produced these embeddings, so
+            # downstream training can detect instruction drift between extraction
+            # and inference (see plan risk #13).
+            "instruction": args.instruction,
+            "backend": args.backend,
+        }
         if want_ref and all_ref_actions:
             ref_actions = torch.from_numpy(
                 np.stack(all_ref_actions, axis=0)
             ).float()                                      # (T, C, action_dim)
             out_blob["ref_actions"] = ref_actions
+            # Back-compat alias used by older validators/trainers.
             out_blob["ref_instruction"] = args.instruction
             out_blob["action_dim"] = int(ref_actions.shape[-1])
             logger.info(
