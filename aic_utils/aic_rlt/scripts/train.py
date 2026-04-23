@@ -37,6 +37,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 import torch
 
@@ -246,6 +247,14 @@ def parse_args():
     parser.add_argument("--hidden_dims", type=int, nargs="+", default=[256, 256])
     parser.add_argument("--rl_token_epochs", type=int, default=50)
     parser.add_argument("--chunk_length", type=int, default=10)
+    parser.add_argument(
+        "--action_dim",
+        type=int,
+        default=None,
+        help="Actor/critic action dim. If omitted, auto-detected "
+        "from embeddings .pt (for phase1/offline) or backend "
+        "(for online). Fail loud if auto-detection finds nothing.",
+    )
     # Phase 2 offline RL arguments
     parser.add_argument(
         "--n_offline_epochs",
@@ -381,6 +390,51 @@ def _detect_embedding_dims(embeddings_dir: str) -> tuple:
     return embed_dim, num_tokens
 
 
+def _detect_action_dim(embeddings_dir: str) -> Optional[int]:
+    """Detect action_dim from a .pt embedding file.
+
+    Priority:
+      1. explicit `action_dim` scalar written by prepare_embeddings.py
+      2. last-axis of `ref_actions` tensor (T, C, action_dim)
+    Returns None if neither is present (caller decides what to do).
+    """
+    emb_dir = Path(embeddings_dir)
+    emb_files = sorted(emb_dir.glob("episode_*.pt")) or sorted(emb_dir.glob("*.pt"))
+    if not emb_files:
+        return None
+    data = torch.load(emb_files[0], map_location="cpu", weights_only=False)
+    ad = data.get("action_dim")
+    if ad is not None:
+        return int(ad)
+    ref = data.get("ref_actions")
+    if ref is not None and ref.ndim == 3:
+        return int(ref.shape[-1])
+    return None
+
+
+def _resolve_action_dim(
+    args, embeddings_dir: Optional[str] = None, backend=None
+) -> int:
+    """Resolve action_dim from (in order): CLI flag, backend, embeddings metadata.
+
+    Raises if none of the sources can supply it.
+    """
+    if args.action_dim is not None:
+        return int(args.action_dim)
+    if backend is not None and getattr(backend, "action_dim", None) is not None:
+        return int(backend.action_dim)
+    if embeddings_dir:
+        ad = _detect_action_dim(embeddings_dir)
+        if ad is not None:
+            logger.info(f"Auto-detected action_dim={ad} from {embeddings_dir}")
+            return ad
+    raise ValueError(
+        "Could not determine action_dim. Pass --action_dim, or ensure the "
+        ".pt embeddings have 'action_dim' or 'ref_actions' metadata, or run "
+        "--mode online_rl with a backend that exposes .action_dim."
+    )
+
+
 def main():
     args = parse_args()
     device = torch.device(args.device)
@@ -396,6 +450,7 @@ def main():
 
         # Auto-detect embedding dimensions from saved files
         vla_embed_dim, num_vla_tokens = _detect_embedding_dims(args.embeddings_dir)
+        action_dim = _resolve_action_dim(args, embeddings_dir=args.embeddings_dir)
 
         rl_token_cfg = RLTokenConfig(
             vla_embed_dim=vla_embed_dim,
@@ -403,7 +458,7 @@ def main():
         )
         actor_critic_cfg = ActorCriticConfig(
             rl_token_dim=rl_token_cfg.rl_token_dim,
-            action_dim=9,
+            action_dim=action_dim,
             prop_dim=26,
             chunk_length=args.chunk_length,
             hidden_dims=args.hidden_dims,
@@ -428,6 +483,7 @@ def main():
             data_dir=args.data_dir,
             embeddings_dir=args.embeddings_dir,
             chunk_length=args.chunk_length,
+            action_dim=action_dim,
         )
         trainer.pretrain_rl_token(demo_dataset)
         trainer.save_checkpoint("phase1_rl_token")
@@ -446,6 +502,7 @@ def main():
             )
 
         vla_embed_dim, num_vla_tokens = _detect_embedding_dims(args.embeddings_dir)
+        action_dim = _resolve_action_dim(args, embeddings_dir=args.embeddings_dir)
 
         rl_token_cfg = RLTokenConfig(
             vla_embed_dim=vla_embed_dim,
@@ -453,7 +510,7 @@ def main():
         )
         actor_critic_cfg = ActorCriticConfig(
             rl_token_dim=rl_token_cfg.rl_token_dim,
-            action_dim=9,
+            action_dim=action_dim,
             prop_dim=26,
             chunk_length=args.chunk_length,
             hidden_dims=args.hidden_dims,
@@ -474,6 +531,7 @@ def main():
             data_dir=args.data_dir,
             embeddings_dir=args.embeddings_dir,
             chunk_length=args.chunk_length,
+            action_dim=action_dim,
         )
         trainer.train_offline(
             demo_dataset,
@@ -503,6 +561,8 @@ def main():
         logger.info(f"Loading VLA backend: {args.vla_backend}")
         vla = create_vla_backend(args.vla_backend, device=device, **backend_kwargs)
 
+        action_dim = _resolve_action_dim(args, backend=vla)
+
         # Build RLT config from VLA dimensions (authoritative source)
         rl_token_cfg = RLTokenConfig(
             vla_embed_dim=vla.embed_dim,
@@ -510,7 +570,7 @@ def main():
         )
         actor_critic_cfg = ActorCriticConfig(
             rl_token_dim=rl_token_cfg.rl_token_dim,
-            action_dim=9,
+            action_dim=action_dim,
             prop_dim=26,
             chunk_length=args.chunk_length,
             hidden_dims=args.hidden_dims,

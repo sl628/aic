@@ -18,3 +18,6 @@ aic_utils/aic_isaac/aic_isaaclab/source/aic_task/aic_task/tasks/manager_based/ai
 
 # Training checkpoints (too large for git)
 checkpoints/
+
+# wandb run logs
+wandb/

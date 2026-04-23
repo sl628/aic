@@ -31,5 +31,9 @@ jobs:
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           activate-environment: true
+          # Skip the pi05 env here: the unit tests don't need JAX/openpi
+          # (they exercise pure-numpy + pytorch paths). pi05-specific
+          # integration is verified manually via Gazebo eval.
+          environments: default
       - name: unit tests
         run: pytest aic_utils/aic_rlt/tests/ -v --tb=short

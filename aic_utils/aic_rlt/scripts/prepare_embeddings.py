@@ -49,7 +49,9 @@ import pyarrow.parquet as pq
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from aic_rlt.vla.xvla_wrapper import XVLAWrapper
+# xvla_wrapper is imported lazily inside main() so that pi05-only runs
+# (which use openpi's venv, where the xvla lerobot policy isn't installed)
+# don't fail at script import time.
 from aic_rlt.trainer import PHASE_NAMES, DEFAULT_PHASE_PROMPTS
 
 logging.basicConfig(
@@ -71,38 +73,84 @@ def decode_image(image_bytes: bytes, image_size: int) -> np.ndarray:
     return np.array(img, dtype=np.uint8)
 
 
-def load_episode_frames(parquet_files, episode_index: int, camera: str):
+def _select_parquet_files_for_episode(parquet_files, episode_index: int):
+    """Narrow the file list to only those containing `episode_index`.
+
+    aic's LeRobot v3.0 dataset stores one episode per parquet (verified:
+    file-XXX.parquet contains episode XXX). If that convention holds,
+    we only read that one file instead of all 100 — ~100× faster.
+    We fall back to the full list if the convention doesn't match.
+    """
+    import pyarrow.parquet as _pq
+
+    # Fast path: filename pattern file-{NNN}.parquet matches episode NNN.
+    for pf in parquet_files:
+        stem = Path(pf).stem  # e.g. "file-007"
+        if stem.startswith("file-"):
+            try:
+                n = int(stem.split("-", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            if n == episode_index:
+                # Sanity-check: read a tiny slice of episode_index column
+                # to confirm the convention holds for this dataset.
+                t = _pq.read_table(pf, columns=["episode_index"]).to_pydict()
+                uniq = set(int(x) for x in t["episode_index"])
+                if uniq == {episode_index}:
+                    return [pf]
+                # Convention violated — fall through to full scan.
+                break
+    return parquet_files
+
+
+def load_episode_frames(parquet_files, episode_index: int, cameras):
     """Load all frames for one episode from parquet files.
+
+    Args:
+        parquet_files: list of parquet file paths (sorted).
+        episode_index: episode to load.
+        cameras: str or list of str. If str, behaves as the single-camera path
+            and stores bytes under `image_bytes`. If list, stores a dict
+            `images_bytes = {cam_name: bytes}` so multi-camera backends (pi05)
+            can pull what they need.
 
     Returns:
         frames: list of dicts sorted by frame_index, each with:
             - frame_index (int)
-            - image_bytes (bytes)
+            - image_bytes (bytes)                     # single-camera
+              or images_bytes (dict[str, bytes])      # multi-camera
             - prop (np.ndarray, 26D) — observation.state
     """
-    img_col = f"observation.images.{camera}"
-    rows = []
+    multi = isinstance(cameras, (list, tuple))
+    cam_list = list(cameras) if multi else [cameras]
+    img_cols = [f"observation.images.{c}" for c in cam_list]
 
-    for pf in parquet_files:
+    def _bytes(entry):
+        return entry["bytes"] if isinstance(entry, dict) else entry
+
+    narrowed = _select_parquet_files_for_episode(parquet_files, episode_index)
+    rows = []
+    for pf in narrowed:
         table = pq.read_table(
             pf,
-            columns=["episode_index", "frame_index", img_col, "observation.state"],
+            columns=["episode_index", "frame_index", *img_cols, "observation.state"],
         )
         d = table.to_pydict()
         n = len(d["episode_index"])
         for i in range(n):
-            if int(d["episode_index"][i]) == episode_index:
-                img_entry = d[img_col][i]
-                img_bytes = (
-                    img_entry["bytes"] if isinstance(img_entry, dict) else img_entry
-                )
-                rows.append(
-                    {
-                        "frame_index": int(d["frame_index"][i]),
-                        "image_bytes": img_bytes,
-                        "prop": np.array(d["observation.state"][i], dtype=np.float32),
-                    }
-                )
+            if int(d["episode_index"][i]) != episode_index:
+                continue
+            row = {
+                "frame_index": int(d["frame_index"][i]),
+                "prop": np.array(d["observation.state"][i], dtype=np.float32),
+            }
+            if multi:
+                row["images_bytes"] = {
+                    c: _bytes(d[col][i]) for c, col in zip(cam_list, img_cols)
+                }
+            else:
+                row["image_bytes"] = _bytes(d[img_cols[0]][i])
+            rows.append(row)
 
     rows.sort(key=lambda r: r["frame_index"])
     return rows
@@ -167,15 +215,22 @@ def parse_args():
     parser.add_argument(
         "--chunk_length", type=int, default=10, help="VLA reference action chunk length"
     )
+    # Default: xvla extracts ref_actions (its native TCP outputs match aic demos);
+    # pi05 does NOT (Option B — pi0.5 as embedding-only feature extractor; its
+    # joint-space predictions are OOD for aic's workspace and not useful as BC).
     parser.add_argument(
         "--extract_ref_actions",
+        dest="extract_ref_actions",
         action="store_true",
-        default=True,
-        help="Also extract per-frame VLA action chunks so Phase 2 "
-        "offline RL sees the same reference distribution as deploy",
+        default=None,
+        help="Force-on per-frame VLA action chunk extraction. "
+        "Defaults: xvla=on, pi05=off.",
     )
     parser.add_argument(
-        "--no_ref_actions", dest="extract_ref_actions", action="store_false"
+        "--no_ref_actions",
+        dest="extract_ref_actions",
+        action="store_false",
+        help="Force-off ref_actions regardless of backend.",
     )
     parser.add_argument(
         "--extract_phase_prompts",
@@ -204,12 +259,18 @@ def parse_args():
 
 def main():
     args = parse_args()
+    # Resolve per-backend default for extract_ref_actions.
+    # None = user didn't specify; pick the right default per backend.
+    if args.extract_ref_actions is None:
+        args.extract_ref_actions = args.backend == "xvla"
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
 
     # Load VLA backend
     if args.backend == "xvla":
+        from aic_rlt.vla.xvla_wrapper import XVLAWrapper
+
         vla = XVLAWrapper(
             model_dir=args.model_dir,
             device=device,
@@ -256,97 +317,88 @@ def main():
             continue
 
         logger.info(f"  Episode {ep_idx:04d}: loading frames ...")
-        frames = load_episode_frames(parquet_files, ep_idx, args.camera)
-        if not frames:
-            logger.warning(
-                f"  Episode {ep_idx:04d}: no frames found for camera '{args.camera}', skipping."
+        if args.backend == "pi05":
+            # pi05/ur5 recipe uses 2 cameras: base + single wrist.
+            # aic records 3 (left/center/right); we map center→base, left→wrist.
+            frames = load_episode_frames(
+                parquet_files,
+                ep_idx,
+                cameras=["center_camera", "left_camera"],
             )
+        else:
+            frames = load_episode_frames(parquet_files, ep_idx, args.camera)
+        if not frames:
+            logger.warning(f"  Episode {ep_idx:04d}: no frames found, skipping.")
             continue
 
         T = len(frames)
         all_embeddings = []
-        all_ref_actions = []  # (T, chunk_length, 9) for xvla when extract_ref_actions
-        want_ref = args.extract_ref_actions and args.backend == "xvla"
-        if args.extract_ref_actions and args.backend != "xvla":
-            logger.warning(
-                "extract_ref_actions is only wired for backend=xvla; "
-                "skipping ref-action extraction for backend=%s",
-                args.backend,
-            )
+        all_ref_actions = []
+        # Both backends now extract ref_actions; enable unless the user opts out.
+        want_ref = args.extract_ref_actions
 
         # Process in batches
         for batch_start in range(0, T, args.batch_size):
             batch_frames = frames[batch_start : batch_start + args.batch_size]
-            batch_imgs = [
-                decode_image(f["image_bytes"], args.image_size) for f in batch_frames
-            ]
 
             batch_embs = []
             if args.backend == "xvla":
+                batch_imgs = [
+                    decode_image(f["image_bytes"], args.image_size)
+                    for f in batch_frames
+                ]
                 for img_np, frame in zip(batch_imgs, batch_frames):
                     emb = vla.get_embeddings(img_np)  # (num_tokens, embed_dim)
                     batch_embs.append(emb)
                     if want_ref:
-                        ref = vla.get_action_chunk(img_np, frame["prop"])  # (C, 7)
+                        ref = vla.get_action_chunk(img_np, frame["prop"])  # (C, 7 or 9)
                         all_ref_actions.append(ref)
             elif args.backend == "pi05":
-                import jax
-                import jax.numpy as jnp
-                from openpi.models import model as _model
-
-                for img_np in batch_imgs:
-                    # Build a minimal Pi0.5 observation from the image
-                    img_f = (img_np.astype(np.float32) / 127.5) - 1.0
-                    img_224 = (
-                        img_f
-                        if img_f.shape[:2] == (224, 224)
-                        else np.array(Image.fromarray(img_np).resize((224, 224)))
+                for frame in batch_frames:
+                    base_img = decode_image(frame["images_bytes"]["center_camera"], 224)
+                    wrist_img = decode_image(frame["images_bytes"]["left_camera"], 224)
+                    # aic state layout: prop[19:25]=joint_0..5, prop[25]=joint_6(gripper)
+                    prop = frame["prop"]
+                    joints = prop[19:25]  # (6,)
+                    gripper = np.array([prop[25]], dtype=np.float32)  # (1,)
+                    backend_obs = vla.frame_to_backend_input(
+                        joints=joints,
+                        gripper=gripper,
+                        base_rgb=base_img,
+                        wrist_rgb=wrist_img,
                     )
-                    if img_224.dtype == np.uint8:
-                        img_224 = (img_224.astype(np.float32) / 127.5) - 1.0
-                    obs = _model.Observation(
-                        images={
-                            k: jnp.array(img_224)[None]
-                            for k in (
-                                "base_0_rgb",
-                                "left_wrist_0_rgb",
-                                "right_wrist_0_rgb",
-                            )
-                        },
-                        image_masks={
-                            k: jnp.ones((1,), dtype=jnp.bool_)
-                            for k in (
-                                "base_0_rgb",
-                                "left_wrist_0_rgb",
-                                "right_wrist_0_rgb",
-                            )
-                        },
-                        state=jnp.zeros((1, 32), dtype=jnp.float32),
-                        tokenized_prompt=jnp.zeros((1, 200), dtype=jnp.int32),
-                        tokenized_prompt_mask=jnp.zeros((1, 200), dtype=jnp.bool_),
-                    )
-                    obs = _model.preprocess_observation(None, obs, train=False)
-                    prefix_tokens, _, _ = vla._model_obj.embed_prefix(obs)
-                    # bfloat16 → float32 via JAX
-                    prefix_f32 = prefix_tokens[0].astype(jnp.float32)
-                    emb = torch.from_numpy(
-                        np.array(jax.device_get(prefix_f32), dtype=np.float32)
-                    )
-                    batch_embs.append(emb)
+                    if want_ref:
+                        # Slow path: run the full forward pass (embed + denoise).
+                        emb_t, ref = vla.get_embeddings_and_actions(backend_obs)
+                        batch_embs.append(emb_t.squeeze(0).cpu())
+                        all_ref_actions.append(ref)  # (C, 7)
+                    else:
+                        # Fast path: Option B — embeddings only, skip denoise.
+                        emb_t = vla.get_embeddings(backend_obs)
+                        batch_embs.append(emb_t.squeeze(0).cpu())
 
             all_embeddings.extend(batch_embs)
 
             if (batch_start // args.batch_size) % 5 == 0:
                 logger.info(f"    {batch_start}/{T} frames processed")
 
-        embeddings = torch.stack(all_embeddings, dim=0)  # (T, num_tokens, 1024)
-        out_blob = {"vla_embeddings": embeddings}
+        embeddings = torch.stack(all_embeddings, dim=0)  # (T, num_tokens, D)
+        out_blob = {
+            "vla_embeddings": embeddings,
+            # Always record which instruction produced these embeddings, so
+            # downstream training can detect instruction drift between extraction
+            # and inference (see plan risk #13).
+            "instruction": args.instruction,
+            "backend": args.backend,
+        }
         if want_ref and all_ref_actions:
             ref_actions = torch.from_numpy(
                 np.stack(all_ref_actions, axis=0)
-            ).float()  # (T, chunk_length, 7)
+            ).float()  # (T, C, action_dim)
             out_blob["ref_actions"] = ref_actions
+            # Back-compat alias used by older validators/trainers.
             out_blob["ref_instruction"] = args.instruction
+            out_blob["action_dim"] = int(ref_actions.shape[-1])
             logger.info(
                 f"  Episode {ep_idx:04d}: ref_actions {tuple(ref_actions.shape)}"
             )
@@ -387,6 +439,19 @@ def main():
 
         torch.save(out_blob, out_path)
         logger.info(f"  Episode {ep_idx:04d}: saved {embeddings.shape} → {out_path}")
+
+        # Free JAX compilation/trace caches between episodes. Without this,
+        # the JIT cache grows monotonically and eventually OOMs on GPUs with
+        # tight memory headroom (observed at ep 5 on a 12GB Titan Xp with
+        # XLA_PYTHON_CLIENT_MEM_FRACTION=0.92). Safe: only clears caches,
+        # not model weights.
+        if args.backend == "pi05":
+            try:
+                import jax
+
+                jax.clear_caches()
+            except Exception as e:
+                logger.warning(f"jax.clear_caches() failed: {e}")
 
     logger.info("Embedding extraction complete.")
 

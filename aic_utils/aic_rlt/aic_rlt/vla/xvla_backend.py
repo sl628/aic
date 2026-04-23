@@ -70,6 +70,7 @@ class XVLABackend(VLABackend):
         )
         self.device = device
         self.chunk_length = chunk_length
+        self.action_dim: int = 9  # 3 xyz + 6 rot6d (see xvla_wrapper.ee6d_to_xyz_rot6d)
 
         # Probe dimensions from a dummy call
         dummy = np.zeros((image_size, image_size, 3), dtype=np.uint8)
@@ -77,9 +78,10 @@ class XVLABackend(VLABackend):
         self.num_tokens: int = emb.shape[0]
         self.embed_dim: int = emb.shape[1]
         logger.info(
-            "XVLABackend ready: num_tokens=%d, embed_dim=%d",
+            "XVLABackend ready: num_tokens=%d, embed_dim=%d, action_dim=%d",
             self.num_tokens,
             self.embed_dim,
+            self.action_dim,
         )
 
     # ------------------------------------------------------------------

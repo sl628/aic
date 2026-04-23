@@ -24,8 +24,11 @@ an episode. The dataset yields:
     {
         "vla_embeddings": Tensor(num_tokens, embed_dim),  # single timestep
         "prop":           Tensor(26,),
-        "action_chunk":   Tensor(chunk_length, 7),
+        "action_chunk":   Tensor(chunk_length, action_dim),
     }
+action_dim is 9 (3D xyz + 6D rot6d) for both backends today (xvla-native TCP,
+pi05-as-feature-extractor with aic demo actions as BC targets). Keep action_dim
+parametric in case a future backend brings its own action space.
 """
 
 import logging
@@ -36,7 +39,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from aic_rlt.vla.xvla_wrapper import quat_actions_to_rot6d
+# quat_actions_to_rot6d is imported lazily where used (xvla-specific rotation
+# conversion path). This lets pi05-only training runs avoid pulling in xvla's
+# dependencies (e.g. the lerobot xvla policy, which isn't present in openpi's venv).
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +61,12 @@ class LeRobotEmbeddingDataset(Dataset):
         data_dir: str,
         embeddings_dir: str,
         chunk_length: int = 10,
+        action_dim: int = 9,
     ):
         self.data_dir = Path(data_dir)
         self.embeddings_dir = Path(embeddings_dir)
         self.chunk_length = chunk_length
+        self.action_dim = action_dim
 
         self._samples: List[Dict] = []  # list of {ep_idx, frame_start}
         self._episodes: Dict[int, Dict] = {}  # ep_idx → {prop, actions, embeddings}
@@ -110,8 +117,19 @@ class LeRobotEmbeddingDataset(Dataset):
             T = len(rows)
 
             props = np.stack([r["prop"] for r in rows])  # (T, 26)
-            actions_quat = np.stack([r["action"] for r in rows])  # (T, 7)
-            actions = quat_actions_to_rot6d(actions_quat)  # (T, 9)
+            actions_raw = np.stack(
+                [r["action"] for r in rows]
+            )  # (T, 7) aic-native TCP+quat
+            # aic's demo actions are 7D TCP (xyz+quat). Training targets are 9D rot6d
+            # for both the xvla path (xvla is TCP-native) and the pi05 Option-B path
+            # (pi0.5 is feature-extractor only; BC targets come from aic demos, same
+            # as xvla). Only run the conversion when raw is 7D-TCP-quat → 9D-rot6d.
+            if actions_raw.shape[-1] == 7 and self.action_dim == 9:
+                from aic_rlt.vla._rotation import quat_actions_to_rot6d
+
+                actions = quat_actions_to_rot6d(actions_raw)  # (T, 9)
+            else:
+                actions = actions_raw  # unchanged
 
             # Load pre-extracted embeddings
             emb_path = self.embeddings_dir / f"episode_{ep_idx:04d}.pt"
@@ -151,8 +169,12 @@ class LeRobotEmbeddingDataset(Dataset):
                     ref_actions = None
                 else:
                     ref_np = ref_actions.float().numpy()
-                    # Convert 7D quat ref_actions → 9D rot6d if needed
-                    if ref_np.shape[-1] == 7:
+                    # Only convert 7D quat → 9D rot6d when that's what the
+                    # actor expects (xvla path). pi05 stores 7D joint ref_actions
+                    # and wants them used as-is.
+                    if ref_np.shape[-1] == 7 and self.action_dim == 9:
+                        from aic_rlt.vla._rotation import quat_actions_to_rot6d
+
                         ref_np = quat_actions_to_rot6d(ref_np)
                     ref_actions = ref_np
 
@@ -182,13 +204,17 @@ class LeRobotEmbeddingDataset(Dataset):
                         phase_ref_actions = None
                         break
                 if phase_ref_actions is not None:
+
+                    def _maybe_convert(v):
+                        arr = v.float().numpy()
+                        if arr.shape[-1] == 7 and self.action_dim == 9:
+                            from aic_rlt.vla._rotation import quat_actions_to_rot6d
+
+                            return quat_actions_to_rot6d(arr)
+                        return arr
+
                     phase_ref_actions = {
-                        k: (
-                            quat_actions_to_rot6d(v.float().numpy())
-                            if v.shape[-1] == 7
-                            else v.float().numpy()
-                        )
-                        for k, v in phase_ref_actions.items()
+                        k: _maybe_convert(v) for k, v in phase_ref_actions.items()
                     }
 
             self._episodes[ep_idx] = {

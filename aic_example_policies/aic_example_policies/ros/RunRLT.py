@@ -77,7 +77,6 @@ from aic_rlt.models.actor_critic import Actor, ActorCriticConfig
 from aic_rlt.vla import create_vla_backend
 from aic_rlt.trainer import DEFAULT_PHASE_PROMPTS, PHASE_NAMES
 
-
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -345,18 +344,28 @@ class RunRLT(Policy):
         )
 
     def _encode_rl_state(self, obs: Observation):
-        """Returns z_rl (1, D_rl), prop (1, prop_dim), ref_chunk (1, C, D) tensors."""
-        # Single VLA forward pass → embeddings + reference actions
-        vla_embeds, ref_np = self._vla.get_embeddings_and_actions(obs)
-        # vla_embeds: (1, N, D_vla) — already on device (from backend)
-        # ref_np:     (C, D)
+        """Returns z_rl (1, D_rl), prop (1, prop_dim), ref_chunk (1, C, D) or None."""
+        if self._vla.actions_are_bc_targets:
+            # Backend's actions match the BC target distribution (e.g. XVLA):
+            # fetch both embeddings and ref actions in one forward pass.
+            vla_embeds, ref_np = self._vla.get_embeddings_and_actions(obs)
+        else:
+            # Backend's actions are NOT BC targets (e.g. Pi0.5 Option B):
+            # skip the action-generation path entirely — it's both wasted
+            # compute and the outputs would mismatch the actor's expectations.
+            vla_embeds = self._vla.get_embeddings(obs)
+            ref_np = None
 
         with torch.no_grad():
             _, z_rl = self.rl_token_model.encode(
                 vla_embeds.to(self.device)
             )  # (1, D_rl)
 
-        ref_t = torch.from_numpy(ref_np).unsqueeze(0).to(self.device)  # (1, C, D)
+        if ref_np is not None:
+            ref_t = torch.from_numpy(ref_np).unsqueeze(0).to(self.device)  # (1, C, D)
+        else:
+            ref_t = None
+
         prop_t = (
             torch.from_numpy(self._extract_prop_state(obs)).unsqueeze(0).to(self.device)
         )  # (1, prop_dim)
@@ -460,6 +469,20 @@ class RunRLT(Policy):
         **kwargs,
     ) -> bool:
         self.get_logger().info(f"RunRLT.insert_cable() start. Task: {task}")
+
+        # Clear JAX compile caches at each trial boundary. Observed during
+        # multi-trial aic_engine eval: GPU memory grew across trials until
+        # trial 2 or 3 hit CUDA_ERROR_OUT_OF_MEMORY during pi0.5 SigLIP
+        # forward. Same pattern we already mitigate in prepare_embeddings
+        # (commit 5851cf4). Only runs on backends that use JAX; plain PyTorch
+        # backends (e.g. XVLA) shouldn't need this and it's a harmless no-op.
+        if not getattr(self._vla, "actions_are_bc_targets", True):
+            try:
+                import jax  # lazy — don't force JAX import in non-JAX backends
+
+                jax.clear_caches()
+            except Exception as e:
+                self.get_logger().warn(f"jax.clear_caches() failed: {e}")
 
         dt = 1.0 / self.control_hz
         timeout_sec = 60.0

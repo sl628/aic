@@ -187,3 +187,27 @@ Manages trial execution, validates participant models, and collects scoring data
 
 This project is licensed under the Apache License 2.0 - see the individual package files for details.
 The [aic_isaac](./aic_utils/aic_isaac/) folder contains files licensed under BSD-3 - see [aic_isaac/LICENSE](./aic_utils/aic_isaac/LICENSE).
+
+---
+
+## `pi05` branch — openpi patches live on a fork
+
+The `pi05` pixi environment (`pixi run -e pi05 ...`) installs openpi from
+the [`sl628/openpi`](https://github.com/sl628/openpi) fork, branch
+`aic-patches` (pinned by SHA in `pixi.toml`). That branch carries two
+aic-specific commits on top of upstream `Physical-Intelligence/openpi`:
+
+1. `a809e3f` — lazy-import `lerobot` in `openpi/training/data_loader.py` +
+   `checkpoints.py`; relax `numpy`, `transformers` upper bounds; drop
+   `openpi-client` from `[project.dependencies]` to avoid a pixi URL
+   conflict; remove the `lerobot` git-source pin so aic can pin its own
+   pypi `lerobot==0.5.1`.
+2. `6a74d39` — drop unused `opencv-python` dep (pulls conflicting
+   `libtiff.so.6` downstream).
+
+The pi05 env is reproducible on any machine from just this repo; no
+local openpi checkout required.
+
+To update the pinned openpi SHA: push new commits to `sl628/openpi:aic-patches`,
+then update the `rev = "..."` values under `[feature.pi05.pypi-dependencies]`
+in `pixi.toml` and run `pixi install -e pi05` to refresh the lockfile.
