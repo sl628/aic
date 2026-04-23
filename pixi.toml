@@ -58,3 +58,51 @@ pyspacemouse = ">=2.0.0, <3"
 
 [activation]
 scripts = ["pixi_env_setup.sh"]
+
+# --------------------------------------------------------------------------
+# pi05 feature: layers openpi + JAX + its transitive deps onto the default
+# environment so `pixi run -e pi05 ros2 run aic_model aic_model ... -p
+# policy_args.vla_backend:=pi05 ...` runs end-to-end in ONE interpreter.
+#
+# Design notes:
+# - openpi normally pins a specific git-ref of lerobot (lerobot.common.*
+#   layout) that conflicts with aic's pypi lerobot==0.5.1 (lerobot.datasets.*
+#   layout). We patch openpi to lazy-import lerobot only on training paths;
+#   inference (Pi05Backend) never needs it.
+# - openpi is installed editable from /home/yifeng/workspace/openpi so the
+#   lazy-lerobot patches take effect.
+# - We intentionally omit openpi's training-only deps (augmax, gym-aloha,
+#   dlimp, tensorflow*) since inference doesn't need them.
+# --------------------------------------------------------------------------
+
+[feature.pi05.pypi-dependencies]
+# Repeat aic's pypi lerobot pin explicitly so the pi05 solve doesn't regress
+# to the conda robostack-kilted lerobot (0.5.0) that pixi would otherwise
+# prefer when openpi also lists "lerobot" as a dep. openpi only imports
+# lerobot in training paths — patched to lazy-import.
+lerobot = "==0.5.1"
+# openpi and openpi-client are both installed editable from /home/yifeng/workspace/openpi.
+# pixi doesn't understand uv's `workspace = true`, so we list openpi-client explicitly.
+openpi = { path = "/home/yifeng/workspace/openpi", editable = true }
+openpi-client = { path = "/home/yifeng/workspace/openpi/packages/openpi-client", editable = true }
+jax = { version = "==0.5.3", extras = ["cuda12"] }
+chex = ">=0.1.85"
+flax = "==0.10.2"
+orbax-checkpoint = "==0.11.13"
+ml_collections = "==1.0.0"
+einops = ">=0.8.0"
+equinox = ">=0.11.8"
+jaxtyping = "==0.2.36"
+sentencepiece = ">=0.2.0"
+beartype = "==0.19.0"
+treescope = ">=0.1.7"
+tqdm-loggable = ">=0.2"
+tyro = ">=0.9.5"
+flatbuffers = ">=24.3.25"
+dm-tree = ">=0.1.8"
+opencv-python = ">=4.10.0.84"
+
+[environments]
+# pi05 = default + pi05 feature (features list). Solve-group with default
+# shares the lockfile so ROS + pytorch come from the same resolved versions.
+pi05 = { features = ["pi05"], solve-group = "default" }
