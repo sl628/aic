@@ -32,8 +32,12 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           activate-environment: true
           # Only install the default environment in CI. The `pi05` environment
-          # has editable path deps to a local openpi checkout (see README) and
-          # cannot be solved on a clean CI runner.
+          # has editable path deps to a local openpi checkout (see README TODO
+          # to fork openpi) so it can't be solved on a clean CI runner.
           environments: default
+          # pi05 feature's path deps cause pixi to mark the lockfile stale on
+          # any host that doesn't have /home/yifeng/workspace/openpi. Disable
+          # --locked until those deps are converted to a portable git ref.
+          locked: false
       - name: unit tests
         run: pytest aic_utils/aic_rlt/tests/ -v --tb=short
