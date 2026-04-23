@@ -92,6 +92,7 @@ _DEFAULT_OUTPUT_DIR = os.environ.get("AIC_DATA_DIR", str(Path.home() / "aic_data
 # Conversion helpers
 # ---------------------------------------------------------------------------
 
+
 def _obs_to_state(obs: Observation) -> np.ndarray:
     cs = obs.controller_state
     tp = cs.tcp_pose
@@ -137,6 +138,7 @@ def _ros_image_to_numpy(ros_img, scale: float) -> np.ndarray:
 # Policy
 # ---------------------------------------------------------------------------
 
+
 class CheatCodeDataCollector(CheatCode):
     """Runs the ground-truth CheatCode policy while recording every step.
 
@@ -176,10 +178,14 @@ class CheatCodeDataCollector(CheatCode):
             port_frame = f"task_board/{task.target_module_name}/{task.port_name}_link"
             plug_frame = f"{task.cable_name}/{task.plug_name}_link"
             port_tf = self._parent_node._tf_buffer.lookup_transform(
-                "base_link", port_frame, Time(),
+                "base_link",
+                port_frame,
+                Time(),
             )
             plug_tf = self._parent_node._tf_buffer.lookup_transform(
-                "base_link", plug_frame, Time(),
+                "base_link",
+                plug_frame,
+                Time(),
             )
             pp = port_tf.transform.translation
             pl = plug_tf.transform.translation
@@ -201,8 +207,9 @@ class CheatCodeDataCollector(CheatCode):
     def _read_latest_trial_score() -> dict:
         """Try to read the most recent trial score from scoring.yaml.
         Returns empty dict if unavailable."""
-        results_dir = os.environ.get("AIC_RESULTS_DIR",
-                                      str(Path.home() / "aic_results"))
+        results_dir = os.environ.get(
+            "AIC_RESULTS_DIR", str(Path.home() / "aic_results")
+        )
         score_path = Path(results_dir) / "scoring.yaml"
         if not score_path.exists():
             return {}
@@ -219,9 +226,11 @@ class CheatCodeDataCollector(CheatCode):
                 "tier1": t.get("tier_1", {}).get("score", 0),
                 "tier2": t.get("tier_2", {}).get("score", 0),
                 "tier3": t.get("tier_3", {}).get("score", 0),
-                "total": (t.get("tier_1", {}).get("score", 0)
-                          + t.get("tier_2", {}).get("score", 0)
-                          + t.get("tier_3", {}).get("score", 0)),
+                "total": (
+                    t.get("tier_1", {}).get("score", 0)
+                    + t.get("tier_2", {}).get("score", 0)
+                    + t.get("tier_3", {}).get("score", 0)
+                ),
                 "trial_key": latest,
             }
         except Exception:
@@ -255,9 +264,7 @@ class CheatCodeDataCollector(CheatCode):
                             key: _ros_image_to_numpy(
                                 getattr(obs, ros_attr), _IMAGE_SCALE
                             )
-                            for key, ros_attr in zip(
-                                _CAMERA_KEYS, _CAMERA_ROS_ATTRS
-                            )
+                            for key, ros_attr in zip(_CAMERA_KEYS, _CAMERA_ROS_ATTRS)
                         },
                     }
                     gt = self._lookup_plug_port_distance(task)
@@ -287,8 +294,9 @@ class CheatCodeDataCollector(CheatCode):
             )
 
         if steps:
-            self._save_episode(episode_id, task, steps, success,
-                               trial_score=trial_score)
+            self._save_episode(
+                episode_id, task, steps, success, trial_score=trial_score
+            )
         else:
             self.get_logger().warn("No steps recorded — episode not saved.")
 

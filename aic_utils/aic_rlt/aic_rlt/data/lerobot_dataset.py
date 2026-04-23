@@ -61,7 +61,7 @@ class LeRobotEmbeddingDataset(Dataset):
         self.embeddings_dir = Path(embeddings_dir)
         self.chunk_length = chunk_length
 
-        self._samples: List[Dict] = []   # list of {ep_idx, frame_start}
+        self._samples: List[Dict] = []  # list of {ep_idx, frame_start}
         self._episodes: Dict[int, Dict] = {}  # ep_idx → {prop, actions, embeddings}
 
         self._load_all_episodes()
@@ -76,15 +76,19 @@ class LeRobotEmbeddingDataset(Dataset):
 
         parquet_files = sorted(self.data_dir.glob("data/**/*.parquet"))
         if not parquet_files:
-            raise FileNotFoundError(f"No parquet files found under {self.data_dir}/data/")
+            raise FileNotFoundError(
+                f"No parquet files found under {self.data_dir}/data/"
+            )
 
         logger.info(f"Loading {len(parquet_files)} parquet files ...")
 
         # Collect all rows grouped by episode_index
         episode_rows: Dict[int, List] = {}
         for pf in parquet_files:
-            table = pq.read_table(pf, columns=["episode_index", "frame_index",
-                                                "observation.state", "action"])
+            table = pq.read_table(
+                pf,
+                columns=["episode_index", "frame_index", "observation.state", "action"],
+            )
             for row in table.to_pydict():
                 pass
             # Convert to per-row dicts
@@ -92,29 +96,33 @@ class LeRobotEmbeddingDataset(Dataset):
             n = len(d["episode_index"])
             for i in range(n):
                 ep = int(d["episode_index"][i])
-                episode_rows.setdefault(ep, []).append({
-                    "frame_index": int(d["frame_index"][i]),
-                    "prop": np.array(d["observation.state"][i], dtype=np.float32),
-                    "action": np.array(d["action"][i], dtype=np.float32),
-                })
+                episode_rows.setdefault(ep, []).append(
+                    {
+                        "frame_index": int(d["frame_index"][i]),
+                        "prop": np.array(d["observation.state"][i], dtype=np.float32),
+                        "action": np.array(d["action"][i], dtype=np.float32),
+                    }
+                )
 
         # Sort frames within each episode and build sample index
         for ep_idx, rows in sorted(episode_rows.items()):
             rows.sort(key=lambda r: r["frame_index"])
             T = len(rows)
 
-            props = np.stack([r["prop"] for r in rows])     # (T, 26)
+            props = np.stack([r["prop"] for r in rows])  # (T, 26)
             actions_quat = np.stack([r["action"] for r in rows])  # (T, 7)
-            actions = quat_actions_to_rot6d(actions_quat)         # (T, 9)
+            actions = quat_actions_to_rot6d(actions_quat)  # (T, 9)
 
             # Load pre-extracted embeddings
             emb_path = self.embeddings_dir / f"episode_{ep_idx:04d}.pt"
             if not emb_path.exists():
-                logger.warning(f"Embedding file not found: {emb_path} — skipping episode {ep_idx}")
+                logger.warning(
+                    f"Embedding file not found: {emb_path} — skipping episode {ep_idx}"
+                )
                 continue
 
             emb_data = torch.load(emb_path, map_location="cpu", weights_only=False)
-            embeddings = emb_data["vla_embeddings"]   # (T, num_tokens, embed_dim)
+            embeddings = emb_data["vla_embeddings"]  # (T, num_tokens, embed_dim)
 
             if embeddings.shape[0] != T:
                 logger.warning(
@@ -175,8 +183,11 @@ class LeRobotEmbeddingDataset(Dataset):
                         break
                 if phase_ref_actions is not None:
                     phase_ref_actions = {
-                        k: quat_actions_to_rot6d(v.float().numpy())
-                        if v.shape[-1] == 7 else v.float().numpy()
+                        k: (
+                            quat_actions_to_rot6d(v.float().numpy())
+                            if v.shape[-1] == 7
+                            else v.float().numpy()
+                        )
                         for k, v in phase_ref_actions.items()
                     }
 
@@ -213,10 +224,10 @@ class LeRobotEmbeddingDataset(Dataset):
         C = self.chunk_length
 
         # Single-frame VLA embedding (anchor frame of the chunk)
-        vla_emb = ep["embeddings"][t]                    # (num_tokens, embed_dim)
+        vla_emb = ep["embeddings"][t]  # (num_tokens, embed_dim)
 
         # Proprioception at anchor frame
-        prop = torch.from_numpy(ep["props"][t])          # (26,)
+        prop = torch.from_numpy(ep["props"][t])  # (26,)
 
         # Action chunk — C consecutive ground-truth actions
         action_chunk = torch.from_numpy(ep["actions"][t : t + C])  # (C, 7)

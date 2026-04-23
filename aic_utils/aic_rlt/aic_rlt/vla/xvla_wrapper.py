@@ -70,6 +70,7 @@ _JOINT_END = 26  # joint_0 through joint_6 → 7 values
 # Rotation conversion utilities
 # ---------------------------------------------------------------------------
 
+
 def quat_to_ee6d(xyz: np.ndarray, quat: np.ndarray) -> np.ndarray:
     """Convert position + quaternion to XVLA ee6d format (20-dim, zero-padded).
 
@@ -81,16 +82,17 @@ def quat_to_ee6d(xyz: np.ndarray, quat: np.ndarray) -> np.ndarray:
         (20,) float32 — XVLA ee6d: [x,y,z, r1(3), r2(3), gripper=0, zeros×10]
     """
     import transforms3d.quaternions as tq
+
     # transforms3d uses [qw, qx, qy, qz] convention
     qw, qx, qy, qz = quat[3], quat[0], quat[1], quat[2]
-    R = tq.quat2mat([qw, qx, qy, qz])         # (3, 3)
-    r1 = R[:, 0].astype(np.float32)            # first column
-    r2 = R[:, 1].astype(np.float32)            # second column
+    R = tq.quat2mat([qw, qx, qy, qz])  # (3, 3)
+    r1 = R[:, 0].astype(np.float32)  # first column
+    r2 = R[:, 1].astype(np.float32)  # second column
     ee6d = np.zeros(20, dtype=np.float32)
     ee6d[0:3] = xyz.astype(np.float32)
     ee6d[3:6] = r1
     ee6d[6:9] = r2
-    ee6d[9] = 0.0                              # gripper (not in our action space)
+    ee6d[9] = 0.0  # gripper (not in our action space)
     # indices 10-19 remain zero (second arm / padding)
     return ee6d
 
@@ -106,6 +108,7 @@ def ee6d_to_quat_xyz(ee6d: np.ndarray) -> tuple:
         quat: (4,) float32 — quaternion [qx, qy, qz, qw]
     """
     import transforms3d.quaternions as tq
+
     xyz = ee6d[0:3].astype(np.float32)
     r1 = ee6d[3:6].astype(np.float64)
     r2 = ee6d[6:9].astype(np.float64)
@@ -114,10 +117,12 @@ def ee6d_to_quat_xyz(ee6d: np.ndarray) -> tuple:
     r2 = r2 - np.dot(r2, r1) * r1
     r2 = r2 / (np.linalg.norm(r2) + 1e-8)
     r3 = np.cross(r1, r2)
-    R = np.stack([r1, r2, r3], axis=1)         # (3, 3), columns are basis vectors
+    R = np.stack([r1, r2, r3], axis=1)  # (3, 3), columns are basis vectors
     # transforms3d mat2quat returns [qw, qx, qy, qz]
     q_wxyz = tq.mat2quat(R)
-    quat = np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=np.float32)  # [qx,qy,qz,qw]
+    quat = np.array(
+        [q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=np.float32
+    )  # [qx,qy,qz,qw]
     return xyz, quat
 
 
@@ -145,6 +150,7 @@ def ee6d_to_xyz_rot6d(ee6d: np.ndarray) -> np.ndarray:
 def rot6d_to_quat(rot6d: np.ndarray) -> np.ndarray:
     """6D rotation [r1(3), r2(3)] → quaternion [qx, qy, qz, qw]."""
     import transforms3d.quaternions as tq
+
     r1, r2 = _gram_schmidt_r1r2(rot6d[0:3], rot6d[3:6])
     r3 = np.cross(r1, r2).astype(np.float64)
     R = np.stack([r1.astype(np.float64), r2.astype(np.float64), r3], axis=1)
@@ -155,6 +161,7 @@ def rot6d_to_quat(rot6d: np.ndarray) -> np.ndarray:
 def quat_to_rot6d(quat: np.ndarray) -> np.ndarray:
     """Quaternion [qx, qy, qz, qw] → 6D rotation [r1(3), r2(3)]."""
     import transforms3d.quaternions as tq
+
     qw, qx, qy, qz = float(quat[3]), float(quat[0]), float(quat[1]), float(quat[2])
     R = tq.quat2mat([qw, qx, qy, qz])
     return np.concatenate([R[:, 0], R[:, 1]]).astype(np.float32)
@@ -180,6 +187,7 @@ def quat_actions_to_rot6d(actions: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # XVLA Wrapper
 # ---------------------------------------------------------------------------
+
 
 class XVLAWrapper:
     """Wraps XVLAPolicy for RLT embedding extraction and reference action generation.
@@ -238,12 +246,15 @@ class XVLAWrapper:
 
     def _preprocess_image(self, image_np: np.ndarray) -> torch.Tensor:
         """(H, W, 3) uint8 RGB → (1, 3, image_size, image_size) float32."""
-        img = torch.from_numpy(image_np).permute(2, 0, 1)            # (3, H, W) uint8
-        img = TF.resize(img, [self.image_size, self.image_size],
-                         interpolation=TF.InterpolationMode.BILINEAR)
+        img = torch.from_numpy(image_np).permute(2, 0, 1)  # (3, H, W) uint8
+        img = TF.resize(
+            img,
+            [self.image_size, self.image_size],
+            interpolation=TF.InterpolationMode.BILINEAR,
+        )
         img = img.float() / 255.0
         img = TF.normalize(img, _IMAGENET_MEAN, _IMAGENET_STD)
-        return img.unsqueeze(0)                                       # (1, 3, H, W)
+        return img.unsqueeze(0)  # (1, 3, H, W)
 
     # ------------------------------------------------------------------
     # Embedding extraction (for RLT Phase 1)
@@ -260,7 +271,7 @@ class XVLAWrapper:
             (num_tokens, 1024) float32 on CPU
         """
         img_t = self._preprocess_image(image_np).to(self.device)
-        pixel_values = img_t.unsqueeze(1)                             # (1, 1, 3, H, W)
+        pixel_values = img_t.unsqueeze(1)  # (1, 1, 3, H, W)
         image_mask = torch.ones(1, 1, dtype=torch.bool, device=self.device)
 
         out = self.policy.model.forward_vlm(
@@ -268,7 +279,7 @@ class XVLAWrapper:
             pixel_values=pixel_values,
             image_mask=image_mask,
         )
-        return out["vlm_features"].squeeze(0).cpu()                   # (num_tokens, 1024)
+        return out["vlm_features"].squeeze(0).cpu()  # (num_tokens, 1024)
 
     # ------------------------------------------------------------------
     # Reference action chunk (for RLT actor conditioning at inference)
@@ -296,17 +307,17 @@ class XVLAWrapper:
         joints = prop[_JOINT_START:_JOINT_END].astype(np.float32)
         state_8 = np.zeros(8, dtype=np.float32)
         state_8[:7] = joints
-        state_t = torch.from_numpy(state_8).unsqueeze(0).to(self.device)   # (1, 8)
+        state_t = torch.from_numpy(state_8).unsqueeze(0).to(self.device)  # (1, 8)
 
         batch = {
-            "observation.images.image": img_t,     # (1, 3, H, W)
-            OBS_LANGUAGE_TOKENS: self.input_ids,   # (1, TOKEN_MAX_LEN)
-            OBS_STATE: state_t,                    # (1, 8)
+            "observation.images.image": img_t,  # (1, 3, H, W)
+            OBS_LANGUAGE_TOKENS: self.input_ids,  # (1, TOKEN_MAX_LEN)
+            OBS_STATE: state_t,  # (1, 8)
         }
 
         # Returns (1, chunk_size, 20) — XVLA's full chunk
         actions = self.policy._get_action_chunk(batch)
-        actions_np = actions.squeeze(0).cpu().numpy()   # (chunk_size, 20)
+        actions_np = actions.squeeze(0).cpu().numpy()  # (chunk_size, 20)
 
         # Take first chunk_length steps and extract [xyz, r1, r2] (9D)
         result = np.zeros((self.chunk_length, 9), dtype=np.float32)

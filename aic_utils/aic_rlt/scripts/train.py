@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 # VLA loading stub
 # ---------------------------------------------------------------------------
 
+
 def load_vla(model_path: str, device: torch.device):
     """Load a pre-trained VLA backbone (π0 or similar).
 
@@ -89,6 +90,7 @@ def load_vla(model_path: str, device: torch.device):
 
         def get_action_chunk(self, obs):
             import numpy as np
+
             return np.zeros((self.chunk_length, self.action_dim), dtype=np.float32)
 
     return _StubVLA()
@@ -97,6 +99,7 @@ def load_vla(model_path: str, device: torch.device):
 # ---------------------------------------------------------------------------
 # Demo dataset stub
 # ---------------------------------------------------------------------------
+
 
 class DemoDataset(torch.utils.data.Dataset):
     """Dataset of VLA embeddings extracted from demonstration episodes.
@@ -131,9 +134,7 @@ class DemoDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         if self._synthetic:
             cfg = self.vla
-            return {
-                "vla_embeddings": torch.randn(cfg.num_tokens, cfg.embed_dim)
-            }
+            return {"vla_embeddings": torch.randn(cfg.num_tokens, cfg.embed_dim)}
         data = torch.load(self.files[idx], map_location="cpu")
         return {"vla_embeddings": data["vla_embeddings"]}
 
@@ -141,6 +142,7 @@ class DemoDataset(torch.utils.data.Dataset):
 # ---------------------------------------------------------------------------
 # Environment stub
 # ---------------------------------------------------------------------------
+
 
 class AICEnvWrapper:
     """Thin wrapper around the AIC environment for RLT training.
@@ -157,12 +159,14 @@ class AICEnvWrapper:
     def reset(self):
         """Reset environment and return initial observation."""
         import numpy as np
+
         self._obs = {"dummy": True}
         return self._obs
 
     def step(self, action_chunk):
         """Execute action chunk, return (next_obs, reward, done, info)."""
         import numpy as np
+
         next_obs = {"dummy": True}
         # Sparse reward: +1 for task success, -1 for failure, 0 otherwise
         reward = 0.0
@@ -173,6 +177,7 @@ class AICEnvWrapper:
 
     def get_prop_state(self, obs):
         import numpy as np
+
         return np.zeros(self.prop_dim, dtype=np.float32)
 
     def human_intervention(self):
@@ -183,6 +188,7 @@ class AICEnvWrapper:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="RLT Training")
     parser.add_argument(
@@ -192,25 +198,47 @@ def parse_args():
         help="Training phase to run",
     )
     # Phase 1 (offline) arguments
-    parser.add_argument("--data_dir", type=str, default="/home/yifeng/aic_data",
-                        help="LeRobot v3.0 dataset root (contains data/, meta/)")
-    parser.add_argument("--embeddings_dir", type=str, default="",
-                        help="Directory of pre-extracted XVLA embeddings (.pt files)")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default="/home/yifeng/aic_data",
+        help="LeRobot v3.0 dataset root (contains data/, meta/)",
+    )
+    parser.add_argument(
+        "--embeddings_dir",
+        type=str,
+        default="",
+        help="Directory of pre-extracted XVLA embeddings (.pt files)",
+    )
     # VLA backend (online RL)
-    parser.add_argument("--vla_backend", type=str, default="xvla",
-                        choices=["xvla", "pi05"],
-                        help="VLA backbone for online RL: 'xvla' (default) or 'pi05'")
-    parser.add_argument("--vla_model_dir", type=str, default="/home/yifeng/models/xvla-base",
-                        help="XVLA model directory (used when --vla_backend=xvla)")
-    parser.add_argument("--pi05_checkpoint", type=str,
-                        default="/home/yifeng/workspace/pi05_base/pi05_base",
-                        help="Pi0.5 checkpoint directory (used when --vla_backend=pi05)")
-    parser.add_argument("--instruction", type=str,
-                        default="Insert SFP cable into NIC port")
+    parser.add_argument(
+        "--vla_backend",
+        type=str,
+        default="xvla",
+        choices=["xvla", "pi05"],
+        help="VLA backbone for online RL: 'xvla' (default) or 'pi05'",
+    )
+    parser.add_argument(
+        "--vla_model_dir",
+        type=str,
+        default="/home/yifeng/models/xvla-base",
+        help="XVLA model directory (used when --vla_backend=xvla)",
+    )
+    parser.add_argument(
+        "--pi05_checkpoint",
+        type=str,
+        default="/home/yifeng/workspace/pi05_base/pi05_base",
+        help="Pi0.5 checkpoint directory (used when --vla_backend=pi05)",
+    )
+    parser.add_argument(
+        "--instruction", type=str, default="Insert SFP cable into NIC port"
+    )
     # Shared arguments
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints/rlt")
     parser.add_argument("--load_checkpoint", type=str, default="")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     # Hyperparameter overrides
     parser.add_argument("--bc_coeff", type=float, default=5.0)
     parser.add_argument("--n_warmup_steps", type=int, default=2000)
@@ -219,33 +247,62 @@ def parse_args():
     parser.add_argument("--rl_token_epochs", type=int, default=50)
     parser.add_argument("--chunk_length", type=int, default=10)
     # Phase 2 offline RL arguments
-    parser.add_argument("--n_offline_epochs", type=int, default=100,
-                        help="Offline gradient epochs for offline_rl mode")
-    parser.add_argument("--reward_sigma", type=float, default=0.05,
-                        help="Legacy: Gaussian sigma (m) for distance-to-goal reward")
+    parser.add_argument(
+        "--n_offline_epochs",
+        type=int,
+        default=100,
+        help="Offline gradient epochs for offline_rl mode",
+    )
+    parser.add_argument(
+        "--reward_sigma",
+        type=float,
+        default=0.05,
+        help="Legacy: Gaussian sigma (m) for distance-to-goal reward",
+    )
     # Structured reward (set --reward_mode structured to activate)
-    parser.add_argument("--reward_mode", choices=["legacy", "structured"],
-                        default="legacy",
-                        help="Offline reward formulation. 'structured' adds "
-                             "orientation + depth + contact + phase bonuses.")
-    parser.add_argument("--reward_sigma_pos", type=float, default=0.03,
-                        help="Structured: position Gaussian width (meters)")
+    parser.add_argument(
+        "--reward_mode",
+        choices=["legacy", "structured"],
+        default="legacy",
+        help="Offline reward formulation. 'structured' adds "
+        "orientation + depth + contact + phase bonuses.",
+    )
+    parser.add_argument(
+        "--reward_sigma_pos",
+        type=float,
+        default=0.03,
+        help="Structured: position Gaussian width (meters)",
+    )
     parser.add_argument("--w_pos", type=float, default=1.0)
     parser.add_argument("--w_ori", type=float, default=0.3)
     parser.add_argument("--w_depth", type=float, default=0.5)
     parser.add_argument("--w_contact", type=float, default=0.2)
     parser.add_argument("--w_phase_bonus", type=float, default=1.0)
     parser.add_argument("--w_success", type=float, default=10.0)
-    parser.add_argument("--port_pos", type=float, nargs=3, default=None,
-                        metavar=("X", "Y", "Z"),
-                        help="Port position in base frame. If omitted, uses "
-                             "per-episode demo endpoint (legacy).")
-    parser.add_argument("--port_quat", type=float, nargs=4, default=None,
-                        metavar=("QX", "QY", "QZ", "QW"),
-                        help="Port orientation quaternion (xyzw).")
-    parser.add_argument("--port_insert_axis", type=int, default=2,
-                        choices=[0, 1, 2],
-                        help="Which port-frame axis points into the port (0=x,1=y,2=z).")
+    parser.add_argument(
+        "--port_pos",
+        type=float,
+        nargs=3,
+        default=None,
+        metavar=("X", "Y", "Z"),
+        help="Port position in base frame. If omitted, uses "
+        "per-episode demo endpoint (legacy).",
+    )
+    parser.add_argument(
+        "--port_quat",
+        type=float,
+        nargs=4,
+        default=None,
+        metavar=("QX", "QY", "QZ", "QW"),
+        help="Port orientation quaternion (xyzw).",
+    )
+    parser.add_argument(
+        "--port_insert_axis",
+        type=int,
+        default=2,
+        choices=[0, 1, 2],
+        help="Which port-frame axis points into the port (0=x,1=y,2=z).",
+    )
     parser.add_argument("--insert_depth_m", type=float, default=0.03)
     # Wandb
     parser.add_argument("--wandb", action="store_true", help="Enable wandb logging")
@@ -274,8 +331,11 @@ def _reward_config_from_args(args) -> RewardConfig:
         w_contact=args.w_contact,
         w_phase_bonus=args.w_phase_bonus,
         w_success=args.w_success,
-        sigma_pos=(args.reward_sigma_pos
-                   if args.reward_mode == "structured" else args.reward_sigma),
+        sigma_pos=(
+            args.reward_sigma_pos
+            if args.reward_mode == "structured"
+            else args.reward_sigma
+        ),
         port_pos=tuple(args.port_pos) if args.port_pos is not None else None,
         port_quat=tuple(args.port_quat) if args.port_quat is not None else None,
         port_insert_axis=args.port_insert_axis,
@@ -305,12 +365,16 @@ def _detect_embedding_dims(embeddings_dir: str) -> tuple:
         # Per-episode: (T, num_tokens, embed_dim)
         num_tokens = emb.shape[1]
         embed_dim = emb.shape[2]
-        logger.info(f"Detected per-episode embeddings: T={emb.shape[0]}, num_tokens={num_tokens}, embed_dim={embed_dim}")
+        logger.info(
+            f"Detected per-episode embeddings: T={emb.shape[0]}, num_tokens={num_tokens}, embed_dim={embed_dim}"
+        )
     elif emb.ndim == 2:
         # Per-frame: (num_tokens, embed_dim)
         num_tokens = emb.shape[0]
         embed_dim = emb.shape[1]
-        logger.info(f"Detected per-frame embeddings: num_tokens={num_tokens}, embed_dim={embed_dim}")
+        logger.info(
+            f"Detected per-frame embeddings: num_tokens={num_tokens}, embed_dim={embed_dim}"
+        )
     else:
         raise ValueError(f"Unexpected embedding shape: {emb.shape}")
 

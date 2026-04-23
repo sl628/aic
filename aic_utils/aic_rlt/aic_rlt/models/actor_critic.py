@@ -44,6 +44,7 @@ import torch.nn.functional as F
 # Configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ActorCriticConfig:
     # RL token dimension (output of RLTokenModel.encode)
@@ -75,6 +76,7 @@ class ActorCriticConfig:
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def build_mlp(
     input_dim: int,
     hidden_dims: List[int],
@@ -100,6 +102,7 @@ def build_mlp(
 # ---------------------------------------------------------------------------
 # Actor
 # ---------------------------------------------------------------------------
+
 
 class Actor(nn.Module):
     """Gaussian actor π_θ(ā_{1:C} | x, ā_{1:C}).
@@ -164,14 +167,16 @@ class Actor(nn.Module):
                 # Reference action dropout: zero out entire chunk for a fraction of samples
                 # (Section III-B: replace with zeros for random subset of transitions)
                 mask = torch.bernoulli(
-                    torch.full((B, 1), 1.0 - self.config.ref_action_dropout, device=z_rl.device)
+                    torch.full(
+                        (B, 1), 1.0 - self.config.ref_action_dropout, device=z_rl.device
+                    )
                 )
                 ref_flat = ref_flat * mask
         else:
             ref_flat = torch.zeros(B, C * D, device=z_rl.device)
 
         x = torch.cat([z_rl, prop, ref_flat], dim=-1)  # (B, D_rl + prop_dim + C*D)
-        mu = self.trunk(x).reshape(B, C, D)             # (B, C, action_dim)
+        mu = self.trunk(x).reshape(B, C, D)  # (B, C, action_dim)
 
         log_std = self.log_std.clamp(self.config.log_std_min, self.config.log_std_max)
         log_std = log_std.reshape(1, C, D).expand(B, -1, -1)
@@ -208,6 +213,7 @@ class Actor(nn.Module):
 # Critic (Q-network ensemble)
 # ---------------------------------------------------------------------------
 
+
 class QNetwork(nn.Module):
     """Single Q-network: Q(x, a_{1:C}) → scalar."""
 
@@ -223,7 +229,9 @@ class QNetwork(nn.Module):
             dropout=config.dropout,
         )
 
-    def forward(self, z_rl: torch.Tensor, prop: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, z_rl: torch.Tensor, prop: torch.Tensor, action: torch.Tensor
+    ) -> torch.Tensor:
         """
         Args:
             z_rl:   (B, D_rl)

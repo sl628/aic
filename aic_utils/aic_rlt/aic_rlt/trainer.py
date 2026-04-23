@@ -83,6 +83,7 @@ class RewardConfig:
     mode="legacy" reproduces the original distance-only Gaussian reward.
     mode="structured" enables the phase-aware multi-term reward.
     """
+
     mode: str = "legacy"  # "legacy" | "structured"
 
     # Term weights (structured only)
@@ -125,6 +126,7 @@ class RewardConfig:
 # ---------------------------------------------------------------------------
 # Training configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class RLTConfig:
@@ -178,7 +180,7 @@ class RLTConfig:
     wandb_run_name: Optional[str] = None
 
     # ---- Logging / Saving ----
-    log_interval: int = 100   # gradient steps
+    log_interval: int = 100  # gradient steps
     save_interval: int = 1000  # gradient steps
     checkpoint_dir: str = "checkpoints/rlt"
 
@@ -186,6 +188,7 @@ class RLTConfig:
 # ---------------------------------------------------------------------------
 # Reward / phase helpers
 # ---------------------------------------------------------------------------
+
 
 def _quat_xyzw_to_mat(q: np.ndarray) -> np.ndarray:
     """Quaternion [qx,qy,qz,qw] → 3x3 rotation matrix."""
@@ -233,15 +236,17 @@ def _infer_phases(
     port_axis = R_port[:, rcfg.port_insert_axis]  # world-frame unit vec
     contact_lo = float(rcfg.contact_axial_band[0])
 
-    d = np.linalg.norm(props[:, 0:3] - goal_pos, axis=1)         # (T,)
-    o_err = 1.0 - np.abs(props[:, 3:7] @ goal_quat)              # (T,)
-    axial_err = np.abs(props[:, 13:16] @ port_axis)               # (T,)
+    d = np.linalg.norm(props[:, 0:3] - goal_pos, axis=1)  # (T,)
+    o_err = 1.0 - np.abs(props[:, 3:7] @ goal_quat)  # (T,)
+    axial_err = np.abs(props[:, 13:16] @ port_axis)  # (T,)
 
     # Order matters: later assignments overwrite earlier ones.
     align_mask = d <= rcfg.d_align_thresh
     phases[align_mask] = PHASE_ALIGN
 
-    insert_mask = align_mask & (o_err <= rcfg.ori_align_thresh) & (axial_err > contact_lo)
+    insert_mask = (
+        align_mask & (o_err <= rcfg.ori_align_thresh) & (axial_err > contact_lo)
+    )
     phases[insert_mask] = PHASE_INSERT
 
     verify_mask = d <= rcfg.d_verify_thresh
@@ -263,13 +268,13 @@ def _compute_structured_reward(
     R_port = _quat_xyzw_to_mat(goal_quat)
     port_axis = R_port[:, rcfg.port_insert_axis]  # (3,) world-frame unit vec
 
-    pos = props[:, 0:3]       # (T, 3)
-    quat = props[:, 3:7]      # (T, 4)
-    err = props[:, 13:16]     # (T, 3) controller pose error (proxy for contact)
+    pos = props[:, 0:3]  # (T, 3)
+    quat = props[:, 3:7]  # (T, 4)
+    err = props[:, 13:16]  # (T, 3) controller pose error (proxy for contact)
 
     # 1. Position Gaussian → [0, 1]
     d = np.linalg.norm(pos - goal_pos, axis=1)
-    r_pos = np.exp(-(d ** 2) / (rcfg.sigma_pos ** 2))
+    r_pos = np.exp(-(d**2) / (rcfg.sigma_pos**2))
 
     # 2. Orientation alignment → [0, 1]
     r_ori = np.abs(quat @ goal_quat)
@@ -279,22 +284,25 @@ def _compute_structured_reward(
     r_depth = np.clip(-proj / max(rcfg.insert_depth_m, 1e-6), 0.0, 1.0)
 
     # 4. Contact term
-    axial_scalar = err @ port_axis                                # (T,)
+    axial_scalar = err @ port_axis  # (T,)
     axial_err = np.abs(axial_scalar)
-    lateral_vec = err - np.outer(axial_scalar, port_axis)         # (T, 3)
+    lateral_vec = err - np.outer(axial_scalar, port_axis)  # (T, 3)
     lateral_err = np.linalg.norm(lateral_vec, axis=1)
     lo, hi = rcfg.contact_axial_band
     axial_in_band = ((axial_err >= lo) & (axial_err <= hi)).astype(np.float32)
     r_contact = np.clip(
         axial_in_band - lateral_err / max(rcfg.contact_lateral_scale, 1e-6),
-        -1.0, 1.0,
+        -1.0,
+        1.0,
     )
 
     # Weighted sum
-    rewards = (rcfg.w_pos * r_pos
-               + rcfg.w_ori * r_ori
-               + rcfg.w_depth * r_depth
-               + rcfg.w_contact * r_contact).astype(np.float32)
+    rewards = (
+        rcfg.w_pos * r_pos
+        + rcfg.w_ori * r_ori
+        + rcfg.w_depth * r_depth
+        + rcfg.w_contact * r_contact
+    ).astype(np.float32)
 
     # 5. Sparse phase-transition bonus
     phase_advanced = np.zeros(T, dtype=np.float32)
@@ -310,6 +318,7 @@ def _compute_structured_reward(
 # ---------------------------------------------------------------------------
 # RLT Trainer
 # ---------------------------------------------------------------------------
+
 
 class RLTTrainer:
     """Implements Algorithm 1 of the RLT paper.
@@ -397,6 +406,7 @@ class RLTTrainer:
         self._wandb = None
         if config.wandb_enabled:
             import wandb
+
             self._wandb = wandb
             wandb.init(
                 project=config.wandb_project,
@@ -499,12 +509,15 @@ class RLTTrainer:
                     a_loss = metrics.get("actor_loss", 0.0)
                     f.write(f"{step+1},{c_loss:.6f},{a_loss:.6f}\n")
                 if self._wandb:
-                    self._wandb.log({
-                        "phase2/step": step + 1,
-                        "phase2/critic_loss": c_loss,
-                        "phase2/actor_loss": a_loss,
-                        "phase2/epoch": (step + 1) / steps_per_epoch,
-                    }, step=step + 1)
+                    self._wandb.log(
+                        {
+                            "phase2/step": step + 1,
+                            "phase2/critic_loss": c_loss,
+                            "phase2/actor_loss": a_loss,
+                            "phase2/epoch": (step + 1) / steps_per_epoch,
+                        },
+                        step=step + 1,
+                    )
 
             if (step + 1) % self.config.save_interval == 0:
                 self.save_checkpoint(f"offline_step_{step+1}")
@@ -537,7 +550,9 @@ class RLTTrainer:
         if needed > self.replay_buffer.capacity:
             logger.info(
                 "Resizing replay buffer: %d → %d (dataset has %d transitions)",
-                self.replay_buffer.capacity, needed, total_transitions,
+                self.replay_buffer.capacity,
+                needed,
+                total_transitions,
             )
             cfg = self.config.actor_critic
             self.replay_buffer = ReplayBuffer(
@@ -556,7 +571,8 @@ class RLTTrainer:
             fixed_port_pos = np.asarray(rcfg.port_pos, dtype=np.float64)
             fixed_port_quat = np.asarray(rcfg.port_quat, dtype=np.float64)
             logger.info(
-                "Using fixed port pose: pos=%s quat=%s", fixed_port_pos.tolist(),
+                "Using fixed port pose: pos=%s quat=%s",
+                fixed_port_pos.tolist(),
                 fixed_port_quat.tolist(),
             )
         else:
@@ -575,9 +591,11 @@ class RLTTrainer:
 
         for ep_idx, ep_data in sorted(demo_dataset._episodes.items()):
             T = ep_data["T"]
-            props: np.ndarray = ep_data["props"]         # (T, 26)
-            actions: np.ndarray = ep_data["actions"]     # (T, 7)
-            embeddings: torch.Tensor = ep_data["embeddings"]  # (T, num_tokens, embed_dim)
+            props: np.ndarray = ep_data["props"]  # (T, 26)
+            actions: np.ndarray = ep_data["actions"]  # (T, 7)
+            embeddings: torch.Tensor = ep_data[
+                "embeddings"
+            ]  # (T, num_tokens, embed_dim)
             ref_actions_ep: Optional[np.ndarray] = ep_data.get("ref_actions")
             phase_embeddings: Optional[dict] = ep_data.get("phase_embeddings")
             phase_ref_actions: Optional[dict] = ep_data.get("phase_ref_actions")
@@ -592,8 +610,9 @@ class RLTTrainer:
 
             # Infer phases early — needed to select phase-matched embeddings.
             phases = _infer_phases(props, goal_pos, goal_quat, rcfg)
-            has_phase_embs = (phase_embeddings is not None
-                              and all(n in phase_embeddings for n in PHASE_NAMES))
+            has_phase_embs = phase_embeddings is not None and all(
+                n in phase_embeddings for n in PHASE_NAMES
+            )
 
             # Batch-encode all frames → z_rl (T, D_rl).
             # When phase embeddings are available, each frame uses the
@@ -626,7 +645,7 @@ class RLTTrainer:
                 )
             else:  # "legacy": original position-only Gaussian
                 d2 = np.sum((props[:, 0:3] - goal_pos) ** 2, axis=1)
-                rewards = np.exp(-d2 / (rcfg.sigma_pos ** 2)).astype(np.float32)
+                rewards = np.exp(-d2 / (rcfg.sigma_pos**2)).astype(np.float32)
 
             # C-step discounted return per chunk start
             gamma = float(self.config.gamma)
@@ -645,8 +664,9 @@ class RLTTrainer:
             else:
                 n_without_ref += 1
 
-            has_phase_refs = (phase_ref_actions is not None
-                              and all(n in phase_ref_actions for n in PHASE_NAMES))
+            has_phase_refs = phase_ref_actions is not None and all(
+                n in phase_ref_actions for n in PHASE_NAMES
+            )
 
             n_added = 0
             for t in range(T - C + 1):
@@ -662,24 +682,34 @@ class RLTTrainer:
                 t_next = min(t + 1, T - 1)
                 done = float(t == T - C)
 
-                pending.append((Transition(
-                    z_rl=z_rls[t],
-                    prop=props[t],
-                    action_chunk=action_chunk,
-                    ref_action_chunk=ref_chunk,
-                    reward=float(chunk_returns[t]),
-                    next_z_rl=z_rls[t_next],
-                    next_prop=props[t_next],
-                    done=done,
-                ), ep_idx))
+                pending.append(
+                    (
+                        Transition(
+                            z_rl=z_rls[t],
+                            prop=props[t],
+                            action_chunk=action_chunk,
+                            ref_action_chunk=ref_chunk,
+                            reward=float(chunk_returns[t]),
+                            next_z_rl=z_rls[t_next],
+                            next_prop=props[t_next],
+                            done=done,
+                        ),
+                        ep_idx,
+                    )
+                )
                 n_added += 1
 
             ph_counts = [int(np.sum(phases == p)) for p in range(4)]
             logger.info(
                 "  Episode %03d: T=%d, transitions=%d, phases=%s (appr/align/insert/verify), "
                 "reward min/mean/max=%.3f/%.3f/%.3f",
-                ep_idx, T, n_added, ph_counts,
-                float(rewards.min()), float(rewards.mean()), float(rewards.max()),
+                ep_idx,
+                T,
+                n_added,
+                ph_counts,
+                float(rewards.min()),
+                float(rewards.mean()),
+                float(rewards.max()),
             )
 
         # Pass 2: normalize rewards and commit to replay buffer.
@@ -691,7 +721,8 @@ class RLTTrainer:
                 r_std = 1.0
             logger.info(
                 "Reward normalization: mean=%.3f std=%.3f → shifting to zero mean, unit std",
-                r_mean, r_std,
+                r_mean,
+                r_std,
             )
             normed_rewards = (raw_rewards - r_mean) / r_std
         else:
@@ -704,9 +735,12 @@ class RLTTrainer:
         logger.info(
             "Replay reward stats over %d transitions (after normalization=%s): "
             "min=%.3f p50=%.3f mean=%.3f p95=%.3f max=%.3f",
-            len(normed_rewards), rcfg.normalize,
-            float(normed_rewards.min()), float(np.median(normed_rewards)),
-            float(normed_rewards.mean()), float(np.percentile(normed_rewards, 95)),
+            len(normed_rewards),
+            rcfg.normalize,
+            float(normed_rewards.min()),
+            float(np.median(normed_rewards)),
+            float(normed_rewards.mean()),
+            float(np.percentile(normed_rewards, 95)),
             float(normed_rewards.max()),
         )
         n_total_eps = n_with_ref + n_without_ref
@@ -714,7 +748,8 @@ class RLTTrainer:
             logger.warning(
                 "Phase 2: %d/%d episodes have NO pre-extracted VLA ref_actions; "
                 "falling back to demo actions as the reference.",
-                n_without_ref, n_total_eps,
+                n_without_ref,
+                n_total_eps,
             )
         else:
             logger.info(
@@ -725,7 +760,8 @@ class RLTTrainer:
             logger.info(
                 "Phase 2: %d/%d episodes used phase-matched embeddings+refs "
                 "(approach/align/insert/verify prompts).",
-                n_phase_matched, n_total_eps,
+                n_phase_matched,
+                n_total_eps,
             )
         else:
             logger.info(
@@ -770,14 +806,19 @@ class RLTTrainer:
                 total_loss += loss.item()
 
             avg_loss = total_loss / len(loader)
-            logger.info(f"  RL Token epoch {epoch + 1}/{self.config.rl_token_epochs}  loss={avg_loss:.4f}")
+            logger.info(
+                f"  RL Token epoch {epoch + 1}/{self.config.rl_token_epochs}  loss={avg_loss:.4f}"
+            )
             with open(csv_path, "a") as f:
                 f.write(f"{epoch + 1},{avg_loss:.6f}\n")
             if self._wandb:
-                self._wandb.log({
-                    "phase1/epoch": epoch + 1,
-                    "phase1/recon_loss": avg_loss,
-                }, step=epoch + 1)
+                self._wandb.log(
+                    {
+                        "phase1/epoch": epoch + 1,
+                        "phase1/recon_loss": avg_loss,
+                    },
+                    step=epoch + 1,
+                )
 
         # Freeze RL token for online RL
         for p in self.rl_token_model.parameters():
@@ -794,8 +835,8 @@ class RLTTrainer:
         with torch.no_grad():
             vla_embeds = self.get_vla_embeddings(obs)  # (1, N, D_vla)
             _, z_rl_sg = self.rl_token_model.encode(vla_embeds)  # (1, D_rl)
-        z_rl = z_rl_sg.squeeze(0).cpu().numpy()        # (D_rl,)
-        prop = self.get_prop_state(obs)                 # (prop_dim,)
+        z_rl = z_rl_sg.squeeze(0).cpu().numpy()  # (D_rl,)
+        prop = self.get_prop_state(obs)  # (prop_dim,)
         return z_rl, prop
 
     def _get_rl_state_tensor(self, z_rl: np.ndarray, prop: np.ndarray):
@@ -856,7 +897,7 @@ class RLTTrainer:
             transition = Transition(
                 z_rl=z_rl,
                 prop=prop,
-                action_chunk=action_chunk,   # full chunk for Q-function
+                action_chunk=action_chunk,  # full chunk for Q-function
                 ref_action_chunk=ref_chunk,
                 reward=reward,
                 next_z_rl=next_z_rl,
@@ -888,18 +929,20 @@ class RLTTrainer:
 
         with torch.no_grad():
             # Sample next action from actor (with target policy noise, TD3)
-            next_ref_t = torch.zeros_like(action)  # no reference at next state during target
+            next_ref_t = torch.zeros_like(
+                action
+            )  # no reference at next state during target
             next_mu, next_log_std = self.actor.forward(
                 next_z_rl, next_prop, next_ref_t, training=False
             )
-            noise = (
-                torch.randn_like(next_mu) * cfg.target_policy_noise
-            ).clamp(-cfg.target_noise_clip, cfg.target_noise_clip)
-            next_action = (next_mu + noise)
+            noise = (torch.randn_like(next_mu) * cfg.target_policy_noise).clamp(
+                -cfg.target_noise_clip, cfg.target_noise_clip
+            )
+            next_action = next_mu + noise
 
             # Minimum twin Q target
             q_next = self.critic_target.min_q(next_z_rl, next_prop, next_action)
-            q_target = reward + (cfg.gamma ** C) * (1.0 - done) * q_next  # (B,)
+            q_target = reward + (cfg.gamma**C) * (1.0 - done) * q_next  # (B,)
 
         # Critic loss (all networks)
         qs = self.critic.forward(z_rl, prop, action)
@@ -940,7 +983,9 @@ class RLTTrainer:
     def _soft_update_target(self) -> None:
         """EMA update of target critic (TD3 target network)."""
         tau = self.config.tau
-        for p_target, p in zip(self.critic_target.parameters(), self.critic.parameters()):
+        for p_target, p in zip(
+            self.critic_target.parameters(), self.critic.parameters()
+        ):
             p_target.data.mul_(1.0 - tau).add_(tau * p.data)
 
     def _gradient_update_step(self) -> Dict[str, float]:
@@ -992,16 +1037,20 @@ class RLTTrainer:
                 metrics = self._gradient_update_step()
 
             # --- Logging ---
-            if (self._total_gradient_steps % cfg.log_interval == 0
-                    and self._total_gradient_steps > 0):
+            if (
+                self._total_gradient_steps % cfg.log_interval == 0
+                and self._total_gradient_steps > 0
+            ):
                 log_str = f"  step={env_step_count}"
                 for k, v in metrics.items():
                     log_str += f"  {k}={v:.4f}"
                 logger.info(log_str)
 
             # --- Checkpointing ---
-            if (self._total_gradient_steps % cfg.save_interval == 0
-                    and self._total_gradient_steps > 0):
+            if (
+                self._total_gradient_steps % cfg.save_interval == 0
+                and self._total_gradient_steps > 0
+            ):
                 self.save_checkpoint(f"step_{self._total_gradient_steps}")
 
         logger.info("Training complete.")
@@ -1046,7 +1095,9 @@ class RLTTrainer:
                 except RuntimeError as e:
                     logger.warning(
                         "Skipping %s weights from checkpoint (shape mismatch, "
-                        "likely action_dim change): %s", name, e,
+                        "likely action_dim change): %s",
+                        name,
+                        e,
                     )
         self._total_gradient_steps = ckpt.get("total_gradient_steps", 0)
         logger.info(f"Checkpoint loaded ← {path}")

@@ -77,7 +77,9 @@ class XVLABackend(VLABackend):
         self.num_tokens: int = emb.shape[0]
         self.embed_dim: int = emb.shape[1]
         logger.info(
-            "XVLABackend ready: num_tokens=%d, embed_dim=%d", self.num_tokens, self.embed_dim
+            "XVLABackend ready: num_tokens=%d, embed_dim=%d",
+            self.num_tokens,
+            self.embed_dim,
         )
 
     # ------------------------------------------------------------------
@@ -127,8 +129,8 @@ class XVLABackend(VLABackend):
     def get_embeddings(self, obs) -> torch.Tensor:
         """(1, num_tokens, embed_dim) on device."""
         img = self._extract_center_image(obs)
-        emb = self._wrapper.get_embeddings(img)          # (N, D) on CPU
-        return emb.unsqueeze(0).to(self.device)           # (1, N, D)
+        emb = self._wrapper.get_embeddings(img)  # (N, D) on CPU
+        return emb.unsqueeze(0).to(self.device)  # (1, N, D)
 
     def get_action_chunk(self, obs) -> np.ndarray:
         """(chunk_length, action_dim) float32."""
