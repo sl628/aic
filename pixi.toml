@@ -100,7 +100,15 @@ tqdm-loggable = ">=0.2"
 tyro = ">=0.9.5"
 flatbuffers = ">=24.3.25"
 dm-tree = ">=0.1.8"
-opencv-python = ">=4.10.0.84"
+# Intentionally NOT using pypi opencv-python here: its bundled libtiff.so.6
+# references libjpeg8 symbols that conflict with the conda-forge libjpeg
+# already pulled in by other ROS deps (observed: undefined symbol
+# jpeg12_write_raw_data on import). Use conda-forge's py-opencv instead —
+# it's built against the same conda stack and loads cleanly.
+
+[feature.pi05.dependencies]
+# py-opencv instead of pypi opencv-python; see note in pypi-deps above.
+py-opencv = ">=4.10"
 
 [environments]
 # pi05 = default + pi05 feature (features list). Solve-group with default
