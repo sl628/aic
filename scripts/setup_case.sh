@@ -27,9 +27,12 @@ echo "node $(node --version)"
 echo "=== Cloning Case ==="
 CASE_DIR="$(dirname "$AIC_DIR")/case"
 if [ ! -d "$CASE_DIR" ]; then
-  git clone https://github.com/workos/case.git "$CASE_DIR"
+  git clone git@github.com:vincewu51/case.git "$CASE_DIR"
+  cd "$CASE_DIR"
+  git remote add upstream https://github.com/workos/case.git
+else
+  cd "$CASE_DIR"
 fi
-cd "$CASE_DIR"
 bun install
 
 echo "=== Registering aic in projects.json ==="
