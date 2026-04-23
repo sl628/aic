@@ -21,6 +21,7 @@ from typing import Any, cast
 import numpy as np
 import pyspacemouse
 import rclpy
+import rclpy.time
 from geometry_msgs.msg import Twist
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
 from lerobot.teleoperators.keyboard import (
