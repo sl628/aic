@@ -43,10 +43,13 @@ import torch.nn.functional as F
 # Configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RLTokenConfig:
     # Dimensionality of each VLA embedding token
-    vla_embed_dim: int = 7848  # SigLIP 400M (1152) + Gemma 4B (2048×3 layers ≈ 7848 aggregate)
+    vla_embed_dim: int = (
+        7848  # SigLIP 400M (1152) + Gemma 4B (2048×3 layers ≈ 7848 aggregate)
+    )
     # Number of VLA embedding tokens per observation
     num_vla_tokens: int = 540  # N (image + language tokens combined)
     # Output RL token dimensionality
@@ -68,6 +71,7 @@ class RLTokenConfig:
 # ---------------------------------------------------------------------------
 # Helper modules
 # ---------------------------------------------------------------------------
+
 
 class SinusoidalPositionalEncoding(nn.Module):
     """Standard sinusoidal positional encoding."""
@@ -94,6 +98,7 @@ class SinusoidalPositionalEncoding(nn.Module):
 # ---------------------------------------------------------------------------
 # Main module
 # ---------------------------------------------------------------------------
+
 
 class RLTokenModel(nn.Module):
     """Encoder-decoder that produces and can reconstruct the RL token.
@@ -153,7 +158,9 @@ class RLTokenModel(nn.Module):
             batch_first=True,
             norm_first=True,
         )
-        self.decoder = nn.TransformerDecoder(dec_layer, num_layers=config.decoder_num_layers)
+        self.decoder = nn.TransformerDecoder(
+            dec_layer, num_layers=config.decoder_num_layers
+        )
 
         # --- Output projection: encoder dim → VLA embed dim for reconstruction ---
         self.output_proj = nn.Linear(D_enc, D_vla)
@@ -184,14 +191,14 @@ class RLTokenModel(nn.Module):
 
         # Append learnable readout token
         readout = self.readout_embed.expand(B, -1, -1)  # (B, 1, D_enc)
-        x = torch.cat([x, readout], dim=1)             # (B, N+1, D_enc)
+        x = torch.cat([x, readout], dim=1)  # (B, N+1, D_enc)
 
         # Positional encoding + encoder
         x = self.pos_enc(x)
         x = self.encoder(x)  # (B, N+1, D_enc)
 
         # Extract readout position (last token)
-        readout_out = x[:, -1, :]         # (B, D_enc)
+        readout_out = x[:, -1, :]  # (B, D_enc)
         z_rl = self.readout_proj(readout_out)  # (B, D_rl)
         z_rl_sg = z_rl.detach()
 
@@ -224,7 +231,7 @@ class RLTokenModel(nn.Module):
         )
 
         decoded = self.decoder(queries, memory, tgt_mask=causal_mask)  # (B, N, D_enc)
-        reconstructed = self.output_proj(decoded)                        # (B, N, D_vla)
+        reconstructed = self.output_proj(decoded)  # (B, N, D_vla)
         return reconstructed
 
     def reconstruction_loss(

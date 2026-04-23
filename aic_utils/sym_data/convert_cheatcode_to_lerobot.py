@@ -73,21 +73,46 @@ FEATURES = {
         "dtype": "float32",
         "shape": (_STATE_DIM,),
         "names": [
-            "tcp_pos_x", "tcp_pos_y", "tcp_pos_z",
-            "tcp_quat_x", "tcp_quat_y", "tcp_quat_z", "tcp_quat_w",
-            "tcp_vel_lx", "tcp_vel_ly", "tcp_vel_lz",
-            "tcp_vel_ax", "tcp_vel_ay", "tcp_vel_az",
-            "tcp_err_x", "tcp_err_y", "tcp_err_z",
-            "tcp_err_rx", "tcp_err_ry", "tcp_err_rz",
-            "joint_0", "joint_1", "joint_2", "joint_3",
-            "joint_4", "joint_5", "joint_6",
+            "tcp_pos_x",
+            "tcp_pos_y",
+            "tcp_pos_z",
+            "tcp_quat_x",
+            "tcp_quat_y",
+            "tcp_quat_z",
+            "tcp_quat_w",
+            "tcp_vel_lx",
+            "tcp_vel_ly",
+            "tcp_vel_lz",
+            "tcp_vel_ax",
+            "tcp_vel_ay",
+            "tcp_vel_az",
+            "tcp_err_x",
+            "tcp_err_y",
+            "tcp_err_z",
+            "tcp_err_rx",
+            "tcp_err_ry",
+            "tcp_err_rz",
+            "joint_0",
+            "joint_1",
+            "joint_2",
+            "joint_3",
+            "joint_4",
+            "joint_5",
+            "joint_6",
         ],
     },
     "action": {
         "dtype": "float32",
         "shape": (_ACTION_DIM,),
-        "names": ["target_x", "target_y", "target_z",
-                  "target_qx", "target_qy", "target_qz", "target_qw"],
+        "names": [
+            "target_x",
+            "target_y",
+            "target_z",
+            "target_qx",
+            "target_qy",
+            "target_qz",
+            "target_qw",
+        ],
     },
     "observation.images.left_camera": {
         "dtype": "image",
@@ -111,6 +136,7 @@ FEATURES = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_index(input_dir: Path, only_successful: bool) -> list[dict]:
     """Read dataset_index.jsonl and return episodes sorted by timestamp."""
     index_path = input_dir / "dataset_index.jsonl"
@@ -129,8 +155,10 @@ def _load_index(input_dir: Path, only_successful: bool) -> list[dict]:
     if only_successful:
         before = len(episodes)
         episodes = [e for e in episodes if e.get("success", False)]
-        print(f"  Filtered to {len(episodes)} successful episodes "
-              f"(dropped {before - len(episodes)} failed)")
+        print(
+            f"  Filtered to {len(episodes)} successful episodes "
+            f"(dropped {before - len(episodes)} failed)"
+        )
 
     # Stable ordering: sort by recorded timestamp
     episodes.sort(key=lambda e: e.get("timestamp", 0))
@@ -162,7 +190,10 @@ def _load_image(image_path: Path) -> np.ndarray:
 # Main conversion
 # ---------------------------------------------------------------------------
 
-def convert(input_dir: Path, output_dir: Path, only_successful: bool, task: str) -> None:
+
+def convert(
+    input_dir: Path, output_dir: Path, only_successful: bool, task: str
+) -> None:
     dataset_path = output_dir / REPO_ID
     if dataset_path.exists():
         raise FileExistsError(
@@ -172,7 +203,9 @@ def convert(input_dir: Path, output_dir: Path, only_successful: bool, task: str)
 
     episodes = _load_index(input_dir, only_successful)
     if not episodes:
-        raise RuntimeError("No episodes to convert. Check --input_dir and --only_successful.")
+        raise RuntimeError(
+            "No episodes to convert. Check --input_dir and --only_successful."
+        )
 
     print(f"Converting {len(episodes)} episodes from {input_dir}")
     print(f"Output → {dataset_path}")
@@ -214,13 +247,16 @@ def convert(input_dir: Path, output_dir: Path, only_successful: bool, task: str)
             print(f"  [{i + 1}/{len(episodes)}] episodes converted")
 
     ds.finalize()
-    print(f"\nDone. {ds.meta.total_episodes} episodes, "
-          f"{ds.meta.total_frames} frames → {dataset_path}")
+    print(
+        f"\nDone. {ds.meta.total_episodes} episodes, "
+        f"{ds.meta.total_frames} frames → {dataset_path}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -235,8 +271,8 @@ def main() -> None:
         "--output_dir",
         default=str(Path.home() / "aic_data_sym"),
         help="Root for the output LeRobot dataset "
-             "(dataset goes in <output_dir>/cheatcode/cable_insertion). "
-             "Default: ~/aic_data_sym",
+        "(dataset goes in <output_dir>/cheatcode/cable_insertion). "
+        "Default: ~/aic_data_sym",
     )
     parser.add_argument(
         "--only_successful",

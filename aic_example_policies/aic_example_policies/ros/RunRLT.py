@@ -77,15 +77,14 @@ from aic_rlt.models.actor_critic import Actor, ActorCriticConfig
 from aic_rlt.vla import create_vla_backend
 from aic_rlt.trainer import DEFAULT_PHASE_PROMPTS, PHASE_NAMES
 
-
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-DEFAULT_VLA_BACKEND   = "xvla"
-DEFAULT_VLA_MODEL_DIR = "/home/yifeng/models/xvla-base"          # XVLA
-DEFAULT_PI05_CKPT     = "/home/yifeng/workspace/pi05_base/pi05_base"  # Pi0.5
-DEFAULT_INSTRUCTION   = "Insert SFP cable into NIC port"
-DEFAULT_CHECKPOINT    = ""
+DEFAULT_VLA_BACKEND = "xvla"
+DEFAULT_VLA_MODEL_DIR = "/home/yifeng/models/xvla-base"  # XVLA
+DEFAULT_PI05_CKPT = "/home/yifeng/workspace/pi05_base/pi05_base"  # Pi0.5
+DEFAULT_INSTRUCTION = "Insert SFP cable into NIC port"
+DEFAULT_CHECKPOINT = ""
 
 # Phase-conditioned prompt defaults (from trainer.py shared constants).
 # Override via ROS params policy_args.prompt_{approach,align,insert,verify}.
@@ -94,10 +93,10 @@ _PHASE_PROMPT_DEFAULTS = {
 }
 
 # Phase-estimator thresholds (must match RewardConfig defaults in trainer).
-_PHASE_D_ALIGN   = 0.03   # m, approach → align
-_PHASE_ORI_ALIGN = 0.05   # 1 - |q·qg|, align → insert
+_PHASE_D_ALIGN = 0.03  # m, approach → align
+_PHASE_ORI_ALIGN = 0.05  # 1 - |q·qg|, align → insert
 _PHASE_ERR_CONTACT = 0.001  # tcp_err norm (m), align → insert
-_PHASE_D_VERIFY  = 0.005  # m, insert → verify
+_PHASE_D_VERIFY = 0.005  # m, insert → verify
 
 
 class RunRLT(Policy):
@@ -126,11 +125,11 @@ class RunRLT(Policy):
 
         # ---- Declare then read ROS parameters ----
         _params = [
-            ("policy_args.vla_backend",      DEFAULT_VLA_BACKEND),
-            ("policy_args.checkpoint_path",  DEFAULT_CHECKPOINT),
-            ("policy_args.vla_model_dir",    DEFAULT_VLA_MODEL_DIR),
-            ("policy_args.pi05_checkpoint",  DEFAULT_PI05_CKPT),
-            ("policy_args.instruction",      DEFAULT_INSTRUCTION),
+            ("policy_args.vla_backend", DEFAULT_VLA_BACKEND),
+            ("policy_args.checkpoint_path", DEFAULT_CHECKPOINT),
+            ("policy_args.vla_model_dir", DEFAULT_VLA_MODEL_DIR),
+            ("policy_args.pi05_checkpoint", DEFAULT_PI05_CKPT),
+            ("policy_args.instruction", DEFAULT_INSTRUCTION),
             # Port pose for phase estimator (xyz + quat xyzw). Empty list
             # disables phase switching; the VLA keeps the static instruction.
             ("policy_args.port_pose_xyzquat", []),
@@ -148,18 +147,18 @@ class RunRLT(Policy):
             except Exception:
                 pass  # already declared by a previous init
 
-        vla_backend     = parent_node.get_parameter("policy_args.vla_backend").value
+        vla_backend = parent_node.get_parameter("policy_args.vla_backend").value
         checkpoint_path = parent_node.get_parameter("policy_args.checkpoint_path").value
-        vla_model_dir   = parent_node.get_parameter("policy_args.vla_model_dir").value
+        vla_model_dir = parent_node.get_parameter("policy_args.vla_model_dir").value
         pi05_checkpoint = parent_node.get_parameter("policy_args.pi05_checkpoint").value
-        instruction     = parent_node.get_parameter("policy_args.instruction").value
+        instruction = parent_node.get_parameter("policy_args.instruction").value
 
         # Phase prompts + port pose (optional)
         self._phase_prompts = {
             "approach": parent_node.get_parameter("policy_args.prompt_approach").value,
-            "align":    parent_node.get_parameter("policy_args.prompt_align").value,
-            "insert":   parent_node.get_parameter("policy_args.prompt_insert").value,
-            "verify":   parent_node.get_parameter("policy_args.prompt_verify").value,
+            "align": parent_node.get_parameter("policy_args.prompt_align").value,
+            "insert": parent_node.get_parameter("policy_args.prompt_insert").value,
+            "verify": parent_node.get_parameter("policy_args.prompt_verify").value,
         }
         self._vla_only = parent_node.get_parameter("policy_args.vla_only").value
         if self._vla_only:
@@ -240,11 +239,12 @@ class RunRLT(Policy):
 
         if backend == "xvla":
             from pathlib import Path
+
             if not Path(vla_model_dir).exists():
                 self.get_logger().warn(
                     f"XVLA model directory not found: {vla_model_dir}. "
                     "Using zero-output stub. "
-                    "Download with: python -c \"from huggingface_hub import snapshot_download; "
+                    'Download with: python -c "from huggingface_hub import snapshot_download; '
                     f"snapshot_download('lerobot/xvla-base', local_dir='{vla_model_dir}')\""
                 )
                 return self._make_stub_backend()
@@ -295,7 +295,9 @@ class RunRLT(Policy):
         self.get_logger().warn("Using zero-output stub VLA — actions will be zeros.")
         return _StubBackend()
 
-    def _validate_checkpoint_dims(self, checkpoint_path: str, cfg: RLTokenConfig) -> None:
+    def _validate_checkpoint_dims(
+        self, checkpoint_path: str, cfg: RLTokenConfig
+    ) -> None:
         """Warn if checkpoint VLA dims don't match the loaded backend."""
         try:
             ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -346,19 +348,31 @@ class RunRLT(Policy):
         )
 
     def _encode_rl_state(self, obs: Observation):
-        """Returns z_rl (1, D_rl), prop (1, prop_dim), ref_chunk (1, C, D) tensors."""
-        # Single VLA forward pass → embeddings + reference actions
-        vla_embeds, ref_np = self._vla.get_embeddings_and_actions(obs)
-        # vla_embeds: (1, N, D_vla) — already on device (from backend)
-        # ref_np:     (C, D)
+        """Returns z_rl (1, D_rl), prop (1, prop_dim), ref_chunk (1, C, D) or None."""
+        if self._vla.actions_are_bc_targets:
+            # Backend's actions match the BC target distribution (e.g. XVLA):
+            # fetch both embeddings and ref actions in one forward pass.
+            vla_embeds, ref_np = self._vla.get_embeddings_and_actions(obs)
+        else:
+            # Backend's actions are NOT BC targets (e.g. Pi0.5 Option B):
+            # skip the action-generation path entirely — it's both wasted
+            # compute and the outputs would mismatch the actor's expectations.
+            vla_embeds = self._vla.get_embeddings(obs)
+            ref_np = None
 
         with torch.no_grad():
-            _, z_rl = self.rl_token_model.encode(vla_embeds.to(self.device))  # (1, D_rl)
+            _, z_rl = self.rl_token_model.encode(
+                vla_embeds.to(self.device)
+            )  # (1, D_rl)
 
-        ref_t = torch.from_numpy(ref_np).unsqueeze(0).to(self.device)   # (1, C, D)
-        prop_t = torch.from_numpy(
-            self._extract_prop_state(obs)
-        ).unsqueeze(0).to(self.device)                                   # (1, prop_dim)
+        if ref_np is not None:
+            ref_t = torch.from_numpy(ref_np).unsqueeze(0).to(self.device)  # (1, C, D)
+        else:
+            ref_t = None
+
+        prop_t = (
+            torch.from_numpy(self._extract_prop_state(obs)).unsqueeze(0).to(self.device)
+        )  # (1, prop_dim)
 
         return z_rl, prop_t, ref_t
 
@@ -383,7 +397,11 @@ class RunRLT(Policy):
         ori_err = 1.0 - ori_sim
         if d <= _PHASE_D_VERIFY:
             return "verify"
-        if d <= _PHASE_D_ALIGN and ori_err <= _PHASE_ORI_ALIGN and err_norm > _PHASE_ERR_CONTACT:
+        if (
+            d <= _PHASE_D_ALIGN
+            and ori_err <= _PHASE_ORI_ALIGN
+            and err_norm > _PHASE_ERR_CONTACT
+        ):
             return "insert"
         if d <= _PHASE_D_ALIGN:
             return "align"
@@ -450,6 +468,7 @@ class RunRLT(Policy):
             action[3:9] — 6D rotation: r1(3) + r2(3), first two columns of R
         """
         from aic_rlt.vla.xvla_wrapper import rot6d_to_quat
+
         quat = rot6d_to_quat(action[3:9])  # [qx, qy, qz, qw]
 
         motion_update = MotionUpdate()
@@ -458,8 +477,10 @@ class RunRLT(Policy):
         motion_update.pose = Pose(
             position=Point(x=float(action[0]), y=float(action[1]), z=float(action[2])),
             orientation=Quaternion(
-                x=float(quat[0]), y=float(quat[1]),
-                z=float(quat[2]), w=float(quat[3]),
+                x=float(quat[0]),
+                y=float(quat[1]),
+                z=float(quat[2]),
+                w=float(quat[3]),
             ),
         )
         # Match CheatCode defaults (policy.py:set_pose_target)
@@ -492,6 +513,20 @@ class RunRLT(Policy):
         **kwargs,
     ) -> bool:
         self.get_logger().info(f"RunRLT.insert_cable() start. Task: {task}")
+
+        # Clear JAX compile caches at each trial boundary. Observed during
+        # multi-trial aic_engine eval: GPU memory grew across trials until
+        # trial 2 or 3 hit CUDA_ERROR_OUT_OF_MEMORY during pi0.5 SigLIP
+        # forward. Same pattern we already mitigate in prepare_embeddings
+        # (commit 5851cf4). Only runs on backends that use JAX; plain PyTorch
+        # backends (e.g. XVLA) shouldn't need this and it's a harmless no-op.
+        if not getattr(self._vla, "actions_are_bc_targets", True):
+            try:
+                import jax  # lazy — don't force JAX import in non-JAX backends
+
+                jax.clear_caches()
+            except Exception as e:
+                self.get_logger().warn(f"jax.clear_caches() failed: {e}")
 
         dt = 1.0 / self.control_hz
         timeout_sec = 60.0

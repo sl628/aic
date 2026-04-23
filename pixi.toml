@@ -15,6 +15,8 @@ isort = "==5.13.2"                                                              
 json5 = ">=0.13.0,<0.14"                                                               # version bundled by the vscode extension
 numpy = "<2.3.0"
 packaging = ">=24.2,<26.0"                                                             # required by lerobot==0.4.3
+pytest = ">=8.0.0,<9"
+scipy = ">=1.13.0,<2"
 pyright = "==1.1.408"
 ros-kilted-aic-control-interfaces = { path = "aic_interfaces/aic_control_interfaces" }
 ros-kilted-aic-example-policies = { path = "aic_example_policies" }
@@ -58,3 +60,65 @@ pyspacemouse = ">=2.0.0, <3"
 
 [activation]
 scripts = ["pixi_env_setup.sh"]
+
+# --------------------------------------------------------------------------
+# pi05 feature: layers openpi + JAX + its transitive deps onto the default
+# environment so `pixi run -e pi05 ros2 run aic_model aic_model ... -p
+# policy_args.vla_backend:=pi05 ...` runs end-to-end in ONE interpreter.
+#
+# Design notes:
+# - openpi normally pins a specific git-ref of lerobot (lerobot.common.*
+#   layout) that conflicts with aic's pypi lerobot==0.5.1 (lerobot.datasets.*
+#   layout). We patch openpi to lazy-import lerobot only on training paths;
+#   inference (Pi05Backend) never needs it.
+# - openpi is installed editable from /home/yifeng/workspace/openpi so the
+#   lazy-lerobot patches take effect.
+# - We intentionally omit openpi's training-only deps (augmax, gym-aloha,
+#   dlimp, tensorflow*) since inference doesn't need them.
+# --------------------------------------------------------------------------
+
+[feature.pi05.pypi-dependencies]
+# Repeat aic's pypi lerobot pin explicitly so the pi05 solve doesn't regress
+# to the conda robostack-kilted lerobot (0.5.0) that pixi would otherwise
+# prefer when openpi also lists "lerobot" as a dep. openpi only imports
+# lerobot in training paths — patched to lazy-import.
+lerobot = "==0.5.1"
+# openpi (and its workspace member openpi-client) are installed from the
+# sl628/openpi fork at branch aic-patches, which carries two aic-specific
+# patches on top of upstream main (see that branch's commit log):
+#   - lazy-import lerobot in training paths
+#   - drop unused opencv-python dep
+#   - relax numpy/transformers upper bounds
+# pixi doesn't understand uv's `workspace = true`, so list openpi-client
+# explicitly as a subdirectory of the same repo.
+openpi = { git = "https://github.com/sl628/openpi.git", rev = "6a74d39e764bce61559ccc944c1ce3ccdbeed6ba" }
+openpi-client = { git = "https://github.com/sl628/openpi.git", rev = "6a74d39e764bce61559ccc944c1ce3ccdbeed6ba", subdirectory = "packages/openpi-client" }
+jax = { version = "==0.5.3", extras = ["cuda12"] }
+chex = ">=0.1.85"
+flax = "==0.10.2"
+orbax-checkpoint = "==0.11.13"
+ml_collections = "==1.0.0"
+einops = ">=0.8.0"
+equinox = ">=0.11.8"
+jaxtyping = "==0.2.36"
+sentencepiece = ">=0.2.0"
+beartype = "==0.19.0"
+treescope = ">=0.1.7"
+tqdm-loggable = ">=0.2"
+tyro = ">=0.9.5"
+flatbuffers = ">=24.3.25"
+dm-tree = ">=0.1.8"
+# Intentionally NOT using pypi opencv-python here: its bundled libtiff.so.6
+# references libjpeg8 symbols that conflict with the conda-forge libjpeg
+# already pulled in by other ROS deps (observed: undefined symbol
+# jpeg12_write_raw_data on import). Use conda-forge's py-opencv instead —
+# it's built against the same conda stack and loads cleanly.
+
+[feature.pi05.dependencies]
+# py-opencv instead of pypi opencv-python; see note in pypi-deps above.
+py-opencv = ">=4.10"
+
+[environments]
+# pi05 = default + pi05 feature (features list). Solve-group with default
+# shares the lockfile so ROS + pytorch come from the same resolved versions.
+pi05 = { features = ["pi05"], solve-group = "default" }

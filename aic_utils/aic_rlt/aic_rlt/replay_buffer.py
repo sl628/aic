@@ -45,13 +45,14 @@ import torch
 @dataclass
 class Transition:
     """A single stored transition (all numpy arrays, float32)."""
-    z_rl: np.ndarray           # (D_rl,)
-    prop: np.ndarray           # (prop_dim,)
-    action_chunk: np.ndarray   # (C, action_dim)  – executed (or human) actions
+
+    z_rl: np.ndarray  # (D_rl,)
+    prop: np.ndarray  # (prop_dim,)
+    action_chunk: np.ndarray  # (C, action_dim)  – executed (or human) actions
     ref_action_chunk: np.ndarray  # (C, action_dim) – VLA reference (may be zeros)
     reward: float
-    next_z_rl: np.ndarray      # (D_rl,)
-    next_prop: np.ndarray      # (prop_dim,)
+    next_z_rl: np.ndarray  # (D_rl,)
+    next_prop: np.ndarray  # (prop_dim,)
     done: bool
 
 
@@ -109,9 +110,9 @@ class ReplayBuffer:
 
         Returns a dict of tensors on self.device.
         """
-        assert self._size >= batch_size, (
-            f"Buffer has {self._size} transitions, need {batch_size}"
-        )
+        assert (
+            self._size >= batch_size
+        ), f"Buffer has {self._size} transitions, need {batch_size}"
         idxs = np.random.randint(0, self._size, size=batch_size)
 
         def to_tensor(arr):
@@ -147,9 +148,19 @@ class ReplayBuffer:
     def load(self, path: str) -> None:
         data = np.load(path)
         n = data["z_rl"].shape[0]
-        assert n <= self.capacity, f"Saved buffer ({n}) exceeds capacity ({self.capacity})"
-        for key in ("z_rl", "prop", "action_chunk", "ref_action_chunk",
-                    "reward", "next_z_rl", "next_prop", "done"):
+        assert (
+            n <= self.capacity
+        ), f"Saved buffer ({n}) exceeds capacity ({self.capacity})"
+        for key in (
+            "z_rl",
+            "prop",
+            "action_chunk",
+            "ref_action_chunk",
+            "reward",
+            "next_z_rl",
+            "next_prop",
+            "done",
+        ):
             getattr(self, f"_{key}")[:n] = data[key]
         self._size = n
         self._ptr = n % self.capacity

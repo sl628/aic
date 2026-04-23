@@ -21,6 +21,7 @@ from typing import Any, cast
 import numpy as np
 import pyspacemouse
 import rclpy
+import rclpy.time
 from geometry_msgs.msg import Twist
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
 from lerobot.teleoperators.keyboard import (
@@ -352,6 +353,7 @@ class AICSpaceMouseTeleop(Teleoperator):
 # duplicate imports, switched quaternion arithmetic to scipy Rotation.
 # ---------------------------------------------------------------------------
 
+
 @TeleoperatorConfig.register_subclass("aic_cheatcode")
 @dataclass(kw_only=True)
 class AICCheatCodeTeleopConfig(TeleoperatorConfig):
@@ -395,8 +397,8 @@ class AICCheatCodeTeleop(Teleoperator):
         self._is_connected = False
 
         # State machine
-        self._phase = "INIT"   # INIT → APPROACH → INSERT → DONE
-        self._z_offset = 0.2   # metres above port; ramps to -0.015 during INSERT
+        self._phase = "INIT"  # INIT → APPROACH → INSERT → DONE
+        self._z_offset = 0.2  # metres above port; ramps to -0.015 during INSERT
         self._start_time = 0.0
         self._lin_err_integrator = np.zeros(3)
 
@@ -471,9 +473,7 @@ class AICCheatCodeTeleop(Teleoperator):
             raise DeviceNotConnectedError()
 
         cfg = self.config
-        port_frame = (
-            f"task_board/{cfg.task_module_name}/{cfg.task_port_name}_link"
-        )
+        port_frame = f"task_board/{cfg.task_module_name}/{cfg.task_port_name}_link"
         cable_tip_frame = f"{cfg.task_cable_name}/{cfg.task_plug_name}_link"
 
         port_tf = self._get_transform("base_link", port_frame)
@@ -496,21 +496,27 @@ class AICCheatCodeTeleop(Teleoperator):
             self._start_time = self._node.get_clock().now().nanoseconds / 1e9
 
         # --- Extract positions ---
-        gripper_pos = np.array([
-            gripper_tf.transform.translation.x,
-            gripper_tf.transform.translation.y,
-            gripper_tf.transform.translation.z,
-        ])
-        plug_pos = np.array([
-            plug_tf.transform.translation.x,
-            plug_tf.transform.translation.y,
-            plug_tf.transform.translation.z,
-        ])
-        port_pos = np.array([
-            port_tf.transform.translation.x,
-            port_tf.transform.translation.y,
-            port_tf.transform.translation.z,
-        ])
+        gripper_pos = np.array(
+            [
+                gripper_tf.transform.translation.x,
+                gripper_tf.transform.translation.y,
+                gripper_tf.transform.translation.z,
+            ]
+        )
+        plug_pos = np.array(
+            [
+                plug_tf.transform.translation.x,
+                plug_tf.transform.translation.y,
+                plug_tf.transform.translation.z,
+            ]
+        )
+        port_pos = np.array(
+            [
+                port_tf.transform.translation.x,
+                port_tf.transform.translation.y,
+                port_tf.transform.translation.z,
+            ]
+        )
 
         # Offset from gripper origin to plug tip (constant while grasping)
         plug_offset = gripper_pos - plug_pos
@@ -565,10 +571,7 @@ class AICCheatCodeTeleop(Teleoperator):
             -cfg.max_integrator_windup,
             cfg.max_integrator_windup,
         )
-        v_lin_world = (
-            cfg.kp_linear * lin_err
-            + cfg.ki_linear * self._lin_err_integrator
-        )
+        v_lin_world = cfg.kp_linear * lin_err + cfg.ki_linear * self._lin_err_integrator
         v_lin_world = np.clip(v_lin_world, -cfg.max_linear_vel, cfg.max_linear_vel)
 
         r_err = r_gripper_target * r_gripper.inv()

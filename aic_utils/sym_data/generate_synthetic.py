@@ -67,21 +67,46 @@ FEATURES = {
         "dtype": "float32",
         "shape": (26,),
         "names": [
-            "tcp_pos_x", "tcp_pos_y", "tcp_pos_z",
-            "tcp_quat_x", "tcp_quat_y", "tcp_quat_z", "tcp_quat_w",
-            "tcp_vel_lx", "tcp_vel_ly", "tcp_vel_lz",
-            "tcp_vel_ax", "tcp_vel_ay", "tcp_vel_az",
-            "tcp_err_x", "tcp_err_y", "tcp_err_z",
-            "tcp_err_rx", "tcp_err_ry", "tcp_err_rz",
-            "joint_0", "joint_1", "joint_2", "joint_3",
-            "joint_4", "joint_5", "joint_6",
+            "tcp_pos_x",
+            "tcp_pos_y",
+            "tcp_pos_z",
+            "tcp_quat_x",
+            "tcp_quat_y",
+            "tcp_quat_z",
+            "tcp_quat_w",
+            "tcp_vel_lx",
+            "tcp_vel_ly",
+            "tcp_vel_lz",
+            "tcp_vel_ax",
+            "tcp_vel_ay",
+            "tcp_vel_az",
+            "tcp_err_x",
+            "tcp_err_y",
+            "tcp_err_z",
+            "tcp_err_rx",
+            "tcp_err_ry",
+            "tcp_err_rz",
+            "joint_0",
+            "joint_1",
+            "joint_2",
+            "joint_3",
+            "joint_4",
+            "joint_5",
+            "joint_6",
         ],
     },
     "action": {
         "dtype": "float32",
         "shape": (7,),
-        "names": ["target_x", "target_y", "target_z",
-                  "target_qx", "target_qy", "target_qz", "target_qw"],
+        "names": [
+            "target_x",
+            "target_y",
+            "target_z",
+            "target_qx",
+            "target_qy",
+            "target_qz",
+            "target_qw",
+        ],
     },
     "observation.images.left_camera": {
         "dtype": "image",
@@ -112,13 +137,14 @@ HOME_JOINTS = np.array(
 PORT_POS_MEAN = np.array([0.50, 0.05, 0.25], dtype=np.float32)
 PORT_POS_STD = np.array([0.03, 0.03, 0.02], dtype=np.float32)
 
-APPROACH_Z_OFFSET = 0.20   # above port before descending
-INSERT_Z_OFFSET = -0.015   # final depth (plug fully inserted)
+APPROACH_Z_OFFSET = 0.20  # above port before descending
+INSERT_Z_OFFSET = -0.015  # final depth (plug fully inserted)
 
 
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
+
 
 def _norm_q(q: np.ndarray) -> np.ndarray:
     n = np.linalg.norm(q)
@@ -147,6 +173,7 @@ def _ease(t: float) -> float:
 # Synthetic image generation
 # ---------------------------------------------------------------------------
 
+
 def _make_image(
     cam_key: str,
     tcp_pos: np.ndarray,
@@ -162,9 +189,9 @@ def _make_image(
     """
     # Per-camera background colour makes the three views visually distinct
     base_color = {
-        "observation.images.left_camera":   np.array([30, 15, 10], np.float32),
+        "observation.images.left_camera": np.array([30, 15, 10], np.float32),
         "observation.images.center_camera": np.array([10, 30, 15], np.float32),
-        "observation.images.right_camera":  np.array([10, 15, 30], np.float32),
+        "observation.images.right_camera": np.array([10, 15, 30], np.float32),
     }.get(cam_key, np.array([20, 20, 20], np.float32))
 
     # Gradient (brighter towards bottom)
@@ -208,6 +235,7 @@ def _make_image(
 # Episode generator
 # ---------------------------------------------------------------------------
 
+
 def _generate_episode(
     ds: LeRobotDataset,
     steps_approach: int,
@@ -243,19 +271,29 @@ def _generate_episode(
         # ---- simulate lag + noise ----
         lag = 0.85
         tcp_pos_prev = tcp_pos.copy()
-        tcp_pos = lag * tcp_pos + (1 - lag) * target_pos + rng.standard_normal(3).astype(np.float32) * 0.001
+        tcp_pos = (
+            lag * tcp_pos
+            + (1 - lag) * target_pos
+            + rng.standard_normal(3).astype(np.float32) * 0.001
+        )
         tcp_quat = _norm_q(_slerp(tcp_quat, target_quat, 1 - lag + 0.01))
         tcp_vel_lin = (tcp_pos - tcp_pos_prev) * FPS
         tcp_vel_ang = rng.standard_normal(3).astype(np.float32) * 0.005
-        tcp_error = np.concatenate([
-            target_pos - tcp_pos + rng.standard_normal(3).astype(np.float32) * 0.0005,
-            rng.standard_normal(3).astype(np.float32) * 0.002,
-        ]).astype(np.float32)
-        joint_pos = (HOME_JOINTS + rng.standard_normal(7).astype(np.float32) * 0.02).astype(np.float32)
+        tcp_error = np.concatenate(
+            [
+                target_pos
+                - tcp_pos
+                + rng.standard_normal(3).astype(np.float32) * 0.0005,
+                rng.standard_normal(3).astype(np.float32) * 0.002,
+            ]
+        ).astype(np.float32)
+        joint_pos = (
+            HOME_JOINTS + rng.standard_normal(7).astype(np.float32) * 0.02
+        ).astype(np.float32)
 
-        state = np.concatenate([
-            tcp_pos, tcp_quat, tcp_vel_lin, tcp_vel_ang, tcp_error, joint_pos
-        ]).astype(np.float32)
+        state = np.concatenate(
+            [tcp_pos, tcp_quat, tcp_vel_lin, tcp_vel_ang, tcp_error, joint_pos]
+        ).astype(np.float32)
         action = np.concatenate([target_pos, target_quat]).astype(np.float32)
 
         frame: dict = {
@@ -276,6 +314,7 @@ def _generate_episode(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate a synthetic LeRobot dataset for AIC cable insertion."
@@ -284,26 +323,36 @@ def main() -> None:
         "--output_dir",
         default=str(Path.home() / "aic_data"),
         help="Root directory for the dataset (dataset goes in <output_dir>/synthetic/cable_insertion). "
-             "Default: ~/aic_data",
+        "Default: ~/aic_data",
     )
     parser.add_argument(
-        "--num_episodes", type=int, default=100,
+        "--num_episodes",
+        type=int,
+        default=100,
         help="Number of episodes to generate (default: 100)",
     )
     parser.add_argument(
-        "--steps_approach", type=int, default=60,
+        "--steps_approach",
+        type=int,
+        default=60,
         help="Steps in the approach phase (default: 60, = 3 s at 20 Hz)",
     )
     parser.add_argument(
-        "--steps_insert", type=int, default=80,
+        "--steps_insert",
+        type=int,
+        default=80,
         help="Steps in the insertion phase (default: 80, = 4 s at 20 Hz)",
     )
     parser.add_argument(
-        "--success_rate", type=float, default=0.95,
+        "--success_rate",
+        type=float,
+        default=0.95,
         help="Fraction of episodes labelled as successful (default: 0.95)",
     )
     parser.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="Random seed (default: 42)",
     )
     args = parser.parse_args()
@@ -319,8 +368,10 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
 
     total_frames = args.num_episodes * (args.steps_approach + args.steps_insert)
-    print(f"Generating {args.num_episodes} episodes "
-          f"({args.steps_approach + args.steps_insert} steps each = {total_frames} total frames)")
+    print(
+        f"Generating {args.num_episodes} episodes "
+        f"({args.steps_approach + args.steps_insert} steps each = {total_frames} total frames)"
+    )
     print(f"Dataset root: {dataset_path}")
 
     ds = LeRobotDataset.create(
@@ -343,8 +394,10 @@ def main() -> None:
             print(f"  [{ep + 1}/{args.num_episodes}] episodes written")
 
     ds.finalize()
-    print(f"\nDone. {ds.meta.total_episodes} episodes, "
-          f"{ds.meta.total_frames} frames → {dataset_path}")
+    print(
+        f"\nDone. {ds.meta.total_episodes} episodes, "
+        f"{ds.meta.total_frames} frames → {dataset_path}"
+    )
     print("\nNext step:")
     print("  pixi run train-act")
 

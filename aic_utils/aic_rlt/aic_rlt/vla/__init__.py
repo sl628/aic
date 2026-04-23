@@ -49,25 +49,28 @@ def create_vla_backend(backend: str, device, **kwargs) -> VLABackend:
     """
     if backend == "xvla":
         from .xvla_backend import XVLABackend
+
         return XVLABackend(device=device, **kwargs)
     elif backend == "pi05":
         from .pi05_backend import Pi05Backend
+
         return Pi05Backend(device=device, **kwargs)
     else:
-        raise ValueError(
-            f"Unknown VLA backend '{backend}'. Supported: 'xvla', 'pi05'."
-        )
+        raise ValueError(f"Unknown VLA backend '{backend}'. Supported: 'xvla', 'pi05'.")
 
 
 def __getattr__(name):
     """Lazy imports — avoids pulling in lerobot/JAX at module load time."""
     if name == "Pi05Backend":
         from .pi05_backend import Pi05Backend
+
         return Pi05Backend
     if name == "XVLABackend":
         from .xvla_backend import XVLABackend
+
         return XVLABackend
     if name == "XVLAWrapper":
         from .xvla_wrapper import XVLAWrapper
+
         return XVLAWrapper
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
