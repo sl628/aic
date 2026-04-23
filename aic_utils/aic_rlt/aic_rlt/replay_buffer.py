@@ -86,9 +86,13 @@ class ReplayBuffer:
         self._z_rl: np.ndarray = np.zeros((capacity, rl_token_dim), dtype=np.float32)
         self._prop: np.ndarray = np.zeros((capacity, prop_dim), dtype=np.float32)
         self._action_chunk: np.ndarray = np.zeros((capacity, C, D), dtype=np.float32)
-        self._ref_action_chunk: np.ndarray = np.zeros((capacity, C, D), dtype=np.float32)
+        self._ref_action_chunk: np.ndarray = np.zeros(
+            (capacity, C, D), dtype=np.float32
+        )
         self._reward: np.ndarray = np.zeros((capacity,), dtype=np.float32)
-        self._next_z_rl: np.ndarray = np.zeros((capacity, rl_token_dim), dtype=np.float32)
+        self._next_z_rl: np.ndarray = np.zeros(
+            (capacity, rl_token_dim), dtype=np.float32
+        )
         self._next_prop: np.ndarray = np.zeros((capacity, prop_dim), dtype=np.float32)
         self._done: np.ndarray = np.zeros((capacity,), dtype=np.float32)
 
