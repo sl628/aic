@@ -34,8 +34,14 @@ def test_sample_keys_and_shapes():
         buf.add(_make_transition(i))
     batch = buf.sample(4)
     assert set(batch.keys()) == {
-        "z_rl", "prop", "action_chunk", "ref_action_chunk",
-        "reward", "next_z_rl", "next_prop", "done",
+        "z_rl",
+        "prop",
+        "action_chunk",
+        "ref_action_chunk",
+        "reward",
+        "next_z_rl",
+        "next_prop",
+        "done",
     }
     assert batch["z_rl"].shape == (4, D_RL)
     assert batch["action_chunk"].shape == (4, C, ACT)

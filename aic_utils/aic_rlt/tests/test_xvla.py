@@ -75,9 +75,7 @@ class TestRot6dConversions:
             quat = _random_unit_quat(rng)
             r6 = quat_to_rot6d(quat)
             quat_back = rot6d_to_quat(r6)
-            np.testing.assert_allclose(
-                np.abs(np.dot(quat_back, quat)), 1.0, atol=1e-5
-            )
+            np.testing.assert_allclose(np.abs(np.dot(quat_back, quat)), 1.0, atol=1e-5)
 
     def test_rot6d_columns_orthonormal(self):
         quat = _random_unit_quat(np.random.RandomState(0))
@@ -134,5 +132,6 @@ class TestVLAFactory:
     def test_unknown_backend_raises(self):
         import torch
         from aic_rlt.vla import create_vla_backend
+
         with pytest.raises(ValueError, match="Unknown VLA backend"):
             create_vla_backend("nonexistent", device=torch.device("cpu"))
