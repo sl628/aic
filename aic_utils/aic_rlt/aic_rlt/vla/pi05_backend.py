@@ -107,6 +107,11 @@ class Pi05Backend(VLABackend):
         self.device = device
         self.chunk_length = chunk_length
         self.action_dim = action_dim
+        # Option B: pi0.5 is used as a frozen feature extractor only. Its
+        # joint-space predictions are OOD for aic's workspace and were not
+        # used as BC targets during training. Inference should skip the
+        # denoise loop and pass ref_chunk=None to the actor.
+        self.actions_are_bc_targets = False
         self._checkpoint_dir = checkpoint_dir
         self._openpi_config = openpi_config
         self._asset_id = asset_id

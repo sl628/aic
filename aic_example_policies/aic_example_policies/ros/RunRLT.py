@@ -340,16 +340,26 @@ class RunRLT(Policy):
         )
 
     def _encode_rl_state(self, obs: Observation):
-        """Returns z_rl (1, D_rl), prop (1, prop_dim), ref_chunk (1, C, D) tensors."""
-        # Single VLA forward pass → embeddings + reference actions
-        vla_embeds, ref_np = self._vla.get_embeddings_and_actions(obs)
-        # vla_embeds: (1, N, D_vla) — already on device (from backend)
-        # ref_np:     (C, D)
+        """Returns z_rl (1, D_rl), prop (1, prop_dim), ref_chunk (1, C, D) or None."""
+        if self._vla.actions_are_bc_targets:
+            # Backend's actions match the BC target distribution (e.g. XVLA):
+            # fetch both embeddings and ref actions in one forward pass.
+            vla_embeds, ref_np = self._vla.get_embeddings_and_actions(obs)
+        else:
+            # Backend's actions are NOT BC targets (e.g. Pi0.5 Option B):
+            # skip the action-generation path entirely — it's both wasted
+            # compute and the outputs would mismatch the actor's expectations.
+            vla_embeds = self._vla.get_embeddings(obs)
+            ref_np = None
 
         with torch.no_grad():
             _, z_rl = self.rl_token_model.encode(vla_embeds.to(self.device))  # (1, D_rl)
 
-        ref_t = torch.from_numpy(ref_np).unsqueeze(0).to(self.device)   # (1, C, D)
+        if ref_np is not None:
+            ref_t = torch.from_numpy(ref_np).unsqueeze(0).to(self.device)  # (1, C, D)
+        else:
+            ref_t = None
+
         prop_t = torch.from_numpy(
             self._extract_prop_state(obs)
         ).unsqueeze(0).to(self.device)                                   # (1, prop_dim)

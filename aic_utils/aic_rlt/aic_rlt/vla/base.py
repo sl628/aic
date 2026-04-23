@@ -24,6 +24,16 @@ Backends also expose:
   - embed_dim:   int   (per-token embedding dimensionality)
   - num_tokens:  int   (number of tokens per observation)
   - action_dim:  int   (dimensionality of actions the backend emits)
+  - actions_are_bc_targets: bool
+      Whether the actions returned by get_action_chunk(...) are in the same
+      distribution/space as the BC targets the RLT actor was trained against.
+      True for backends whose native action output matches aic's demos (e.g.
+      XVLA is TCP-native, same as aic's recorded demo actions).
+      False for backends whose actions don't match training BC targets (e.g.
+      Pi0.5 under "Option B" — used as a frozen feature extractor only; its
+      joint-space predictions are OOD for aic's workspace and were not used
+      as BC targets). When False, inference should call get_embeddings(...)
+      and pass ref_chunk=None to the actor.
 
 These dimensions are used to construct RLTokenConfig / ActorCriticConfig.
 """
@@ -45,6 +55,9 @@ class VLABackend(ABC):
     embed_dim: int
     num_tokens: int
     action_dim: int
+    # Default: most backends' actions ARE the BC target distribution (true for
+    # TCP-native backends like XVLA). Pi0.5/Option-B overrides this to False.
+    actions_are_bc_targets: bool = True
 
     @abstractmethod
     def get_embeddings(self, obs) -> torch.Tensor:
