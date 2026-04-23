@@ -36,7 +36,7 @@ so that the stored transitions span the correct horizon for the chunked TD targe
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 import torch
@@ -78,21 +78,22 @@ class ReplayBuffer:
         self.chunk_length = chunk_length
         self.device = device
 
-        self._ptr = 0
-        self._size = 0
+        self._ptr: int = 0
+        self._size: int = 0
 
-        C, D = chunk_length, action_dim
-        self._z_rl = np.zeros((capacity, rl_token_dim), dtype=np.float32)
-        self._prop = np.zeros((capacity, prop_dim), dtype=np.float32)
-        self._action_chunk = np.zeros((capacity, C, D), dtype=np.float32)
-        self._ref_action_chunk = np.zeros((capacity, C, D), dtype=np.float32)
-        self._reward = np.zeros((capacity,), dtype=np.float32)
-        self._next_z_rl = np.zeros((capacity, rl_token_dim), dtype=np.float32)
-        self._next_prop = np.zeros((capacity, prop_dim), dtype=np.float32)
-        self._done = np.zeros((capacity,), dtype=np.float32)
+        C: int = chunk_length
+        D: int = action_dim
+        self._z_rl: np.ndarray = np.zeros((capacity, rl_token_dim), dtype=np.float32)
+        self._prop: np.ndarray = np.zeros((capacity, prop_dim), dtype=np.float32)
+        self._action_chunk: np.ndarray = np.zeros((capacity, C, D), dtype=np.float32)
+        self._ref_action_chunk: np.ndarray = np.zeros((capacity, C, D), dtype=np.float32)
+        self._reward: np.ndarray = np.zeros((capacity,), dtype=np.float32)
+        self._next_z_rl: np.ndarray = np.zeros((capacity, rl_token_dim), dtype=np.float32)
+        self._next_prop: np.ndarray = np.zeros((capacity, prop_dim), dtype=np.float32)
+        self._done: np.ndarray = np.zeros((capacity,), dtype=np.float32)
 
     def add(self, transition: Transition) -> None:
-        idx = self._ptr
+        idx: int = self._ptr
         self._z_rl[idx] = transition.z_rl
         self._prop[idx] = transition.prop
         self._action_chunk[idx] = transition.action_chunk
@@ -113,9 +114,9 @@ class ReplayBuffer:
         assert (
             self._size >= batch_size
         ), f"Buffer has {self._size} transitions, need {batch_size}"
-        idxs = np.random.randint(0, self._size, size=batch_size)
+        idxs: np.ndarray = np.random.randint(0, self._size, size=batch_size)
 
-        def to_tensor(arr):
+        def to_tensor(arr: np.ndarray) -> torch.Tensor:
             return torch.from_numpy(arr[idxs]).to(self.device)
 
         return {
@@ -146,8 +147,8 @@ class ReplayBuffer:
         )
 
     def load(self, path: str) -> None:
-        data = np.load(path)
-        n = data["z_rl"].shape[0]
+        data: Dict[str, np.ndarray] = dict(np.load(path))
+        n: int = data["z_rl"].shape[0]
         assert (
             n <= self.capacity
         ), f"Saved buffer ({n}) exceeds capacity ({self.capacity})"
@@ -161,6 +162,7 @@ class ReplayBuffer:
             "next_prop",
             "done",
         ):
-            getattr(self, f"_{key}")[:n] = data[key]
+            buffer_attr: np.ndarray = getattr(self, f"_{key}")
+            buffer_attr[:n] = data[key]
         self._size = n
         self._ptr = n % self.capacity
