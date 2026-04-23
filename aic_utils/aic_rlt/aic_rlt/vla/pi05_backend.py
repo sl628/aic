@@ -44,14 +44,35 @@ OPENPI_ROOT = Path(os.environ.get("OPENPI_ROOT", "/home/yifeng/workspace/openpi"
 
 
 def _setup_openpi_path():
-    """Add openpi source and its venv site-packages to sys.path."""
+    """Make openpi and openpi_client importable.
+
+    Two supported environments:
+      - aic pixi `pi05` env: openpi + openpi-client are installed editable;
+        this function is a no-op (detected by successful `import openpi`).
+      - fallback (historical): openpi lives at OPENPI_ROOT with its own
+        Python 3.11 uv venv; we prepend openpi's sources + venv site-packages
+        to sys.path. Only safe when the host interpreter is also 3.11 and
+        openpi isn't already installed — otherwise cp311 C extensions shadow
+        the host's compatible ones (e.g. tensorstore) and import breaks.
+    """
+    try:
+        import openpi  # noqa: F401
+        import openpi_client  # noqa: F401
+        return  # already importable from the current env; do not taint sys.path
+    except ImportError:
+        pass
+
     openpi_src = OPENPI_ROOT / "src"
     openpi_client_src = OPENPI_ROOT / "packages" / "openpi-client" / "src"
     venv_site = OPENPI_ROOT / ".venv" / "lib"
 
     site_packages = None
     if venv_site.exists():
+        # Only use the fallback venv if its Python matches the host interpreter.
+        host_tag = f"python{sys.version_info.major}.{sys.version_info.minor}"
         for p in venv_site.iterdir():
+            if p.name != host_tag:
+                continue
             sp = p / "site-packages"
             if sp.exists():
                 site_packages = sp
