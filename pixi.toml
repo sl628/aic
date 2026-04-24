@@ -47,6 +47,7 @@ torchvision = "==0.22.1+cu128"
 torchaudio = "==2.7.1+cu128"
 
 [pypi-dependencies]
+black = ">=24.0.0,<26"
 huggingface-hub = { version = "~=1.7", extras = ["hf-transfer", "cli"] }
 aic-rlt = { path = "aic_utils/aic_rlt", editable = true }
 transformers = ">=4.40.0"

@@ -74,6 +74,10 @@ policy:
   optimizer_weight_decay: 1.0e-4
   optimizer_lr_backbone: 1.0e-5
 
+  # Hub config - train locally, don't push
+  push_to_hub: false
+  repo_id: "synthetic/act_aic_cable_insertion"
+
 # Training pipeline configuration
 output_dir: "outputs/act_aic_training"
 job_name: "act_aic_cable_insertion"

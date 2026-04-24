@@ -14,8 +14,26 @@
 #  limitations under the License.
 #
 
-"""ACT Trainer for AIC Cable Insertion Task
+"""ACT Trainer for AIC Cable Insertion Task.
 
 This package provides training infrastructure for Action Chunking Transformer (ACT)
 policies on synthetic cable insertion data, as an alternative to the RLT approach.
 """
+
+from aic_utils.aic_act_trainer.train_act import (
+    create_act_config,
+    create_dataset_config,
+    create_training_config,
+    main,
+)
+from aic_utils.aic_act_trainer.train_with_config import load_config_from_yaml
+from aic_utils.aic_act_trainer.train_with_config import main as train_with_config_main
+
+__all__ = [
+    "create_act_config",
+    "create_dataset_config",
+    "create_training_config",
+    "load_config_from_yaml",
+    "main",
+    "train_with_config_main",
+]
