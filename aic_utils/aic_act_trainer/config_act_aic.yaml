@@ -1,0 +1,120 @@
+# ACT Training Configuration for AIC Cable Insertion Task
+#
+# This configuration file provides optimized settings for training ACT policies
+# on the AIC synthetic cable insertion dataset.
+
+# Dataset configuration
+dataset:
+  repo_id: "synthetic/cable_insertion"
+  root: "/home/yifeng/aic_data_sym"
+  episodes_filter: null
+  episodes_fraction: 1.0
+
+# Policy configuration (ACT)
+policy:
+  type: "act"
+  
+  # Input/output structure
+  n_obs_steps: 1
+  chunk_size: 10
+  n_action_steps: 10
+  
+  # Feature definitions matching AIC dataset format
+  input_features:
+    observation.images.left_camera:
+      feature_type: "VISUAL"
+      shape: [3, 256, 288]
+    observation.images.center_camera:
+      feature_type: "VISUAL"
+      shape: [3, 256, 288]
+    observation.images.right_camera:
+      feature_type: "VISUAL"
+      shape: [3, 256, 288]
+    observation.state:
+      feature_type: "STATE"
+      shape: [26]
+  
+  output_features:
+    action:
+      feature_type: "ACTION"
+      shape: [7]  # [x, y, z, qx, qy, qz, qw]
+  
+  # Normalization settings
+  normalization_mapping:
+    VISUAL: "MEAN_STD"
+    STATE: "MEAN_STD"
+    ACTION: "MEAN_STD"
+  
+  # Vision backbone
+  vision_backbone: "resnet18"
+  pretrained_backbone_weights: "ResNet18_Weights.IMAGENET1K_V1"
+  replace_final_stride_with_dilation: false
+  
+  # Transformer architecture (optimized for manipulation)
+  pre_norm: false
+  dim_model: 256
+  n_heads: 8
+  dim_feedforward: 1024
+  feedforward_activation: "relu"
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  
+  # VAE configuration
+  use_vae: true
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+  
+  # Training settings
+  dropout: 0.1
+  kl_weight: 10.0
+  temporal_ensemble_coeff: null
+  
+  # Learning rates
+  optimizer_lr: 1.0e-5
+  optimizer_weight_decay: 1.0e-4
+  optimizer_lr_backbone: 1.0e-5
+
+  # Hub config - train locally, don't push
+  push_to_hub: false
+  repo_id: "synthetic/act_aic_cable_insertion"
+
+# Training pipeline configuration
+output_dir: "outputs/act_aic_training"
+job_name: "act_aic_cable_insertion"
+resume: false
+seed: 1000
+cudnn_deterministic: false
+
+# Training hyperparameters
+num_workers: 4
+batch_size: 8
+steps: 100000
+eval_freq: 10000
+log_freq: 200
+save_checkpoint: true
+save_freq: 10000
+use_policy_training_preset: true
+
+# Evaluation configuration
+eval:
+  n_episodes: 10
+  max_episode_steps: 600
+  eval_rollout: true
+
+# Weights & Biases configuration  
+wandb:
+  enable: false
+  project: "aic-act"
+  run_name: null
+  entity: null
+  notes: "ACT training on AIC synthetic cable insertion data"
+  
+# PEFT (Parameter Efficient Fine-Tuning)
+peft: null
+
+# RA-BC (Reward-Aligned Behavior Cloning)
+use_rabc: false
+rabc_progress_path: null
+rabc_kappa: 0.01
+rabc_epsilon: 1.0e-6
+rabc_head_mode: "sparse"
