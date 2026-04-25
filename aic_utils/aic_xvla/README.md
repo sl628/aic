@@ -52,13 +52,42 @@ python -m aic_xvla.build_meta \
 
 ## Train
 
+X-VLA ships two official fine-tune entry points; the wrapper exposes both via `--mode`:
+
+| `--mode` | Calls | Trainable params | When to use |
+|---|---|---|---|
+| `full` (default) | `train.py` | all (~890M) | full FT, multi-GPU or ≥40 GB VRAM |
+| `peft` | `peft_train.py` | LoRA only (~12M) | single-GPU / consumer cards, overfit demos |
+
 Run from inside the X-VLA env, with both repos on `PYTHONPATH`:
 
 ```bash
 export XVLA_REPO=~/workspace/X-VLA
 export PYTHONPATH=$XVLA_REPO:$PYTHONPATH
+```
 
-accelerate launch --num_processes 1 -m aic_xvla.train \
+**LoRA fine-tune (fits on a 16 GB card with bf16):**
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+accelerate launch --num_processes 1 --mixed_precision bf16 -m aic_xvla.train \
+    --mode peft \
+    --models 2toINF/X-VLA-Pt \
+    --train_metas_path /path/to/aic_meta.json \
+    --output_dir runnings/aic_xvla \
+    --batch_size 1 \
+    --learning_rate 5e-4 \
+    --iters 3000 \
+    --warmup_steps 50 \
+    --freeze_steps 0 \
+    --save_interval 1000
+```
+
+**Full fine-tune (needs more VRAM):**
+
+```bash
+accelerate launch --num_processes 1 --mixed_precision bf16 -m aic_xvla.train \
+    --mode full \
     --models 2toINF/X-VLA-Pt \
     --train_metas_path /path/to/aic_meta.json \
     --output_dir runnings/aic_xvla \
