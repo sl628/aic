@@ -179,7 +179,7 @@ export AIC_XVLA_SERVER_URL=http://127.0.0.1:8010
 
 pixi run ros2 run aic_model aic_model --ros-args \
     -p use_sim_time:=true \
-    -p policy:=aic_xvla.ros.RunXVLA.RunXVLA
+    -p policy:=aic_xvla.ros.RunXVLA
 ```
 
 > If you have a `(base)` conda env active, `pixi run pip` falls through to conda's pip and installs into the wrong python. Either `conda deactivate` first, or just stick with `PYTHONPATH` — it works regardless of conda state.

@@ -7,7 +7,7 @@ Run (after `aic_xvla.serve` is up and `/entrypoint.sh` started the engine):
 
     pixi run ros2 run aic_model aic_model --ros-args \\
         -p use_sim_time:=true \\
-        -p policy:=aic_xvla.ros.RunXVLA.RunXVLA \\
+        -p policy:=aic_xvla.ros.RunXVLA \\
         -p policy_config_file:=/path/to/runxvla.yaml   # optional
 
 Configuration via the policy_config_file (yaml) or env vars:
