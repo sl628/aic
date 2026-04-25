@@ -29,6 +29,12 @@ Debug aids (optional, off by default):
                                so offline and closed-loop runs can be diffed.
                                Frames are also dumped under <dir>/images/ to
                                make A/B against the training JPEGs trivial.
+    AIC_XVLA_CMD_MODE          'pose' (default) sends pose targets via
+                               set_pose_target; 'velocity' sends Cartesian twist
+                               commands derived from (target - live) / control_period
+                               with stiffer gains, mirroring RunACT.
+    AIC_XVLA_VEL_GAIN          scale on the velocity command (default 1.0).
+                               Bump to >1 if motion is still too small.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ import requests
 from aic_control_interfaces.msg import MotionUpdate, TrajectoryGenerationMode
 from aic_model_interfaces.msg import Observation
 from aic_task_interfaces.msg import Task
-from geometry_msgs.msg import Point, Pose, Quaternion, Vector3, Wrench
+from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3, Wrench
 from rclpy.node import Node
 from std_msgs.msg import Header
 
@@ -111,6 +117,12 @@ class RunXVLA(Policy):
         self.debug_image_dir = os.environ.get("AIC_XVLA_DEBUG_IMAGE_DIR", "") or None
         self.bgr_input = os.environ.get("AIC_XVLA_BGR_INPUT", "0") == "1"
         self.trace_path = os.environ.get("AIC_XVLA_TRACE_PATH", "") or None
+        self.cmd_mode = os.environ.get("AIC_XVLA_CMD_MODE", "pose").lower()
+        if self.cmd_mode not in ("pose", "velocity"):
+            raise ValueError(
+                f"AIC_XVLA_CMD_MODE must be pose|velocity, got {self.cmd_mode!r}"
+            )
+        self.vel_gain = float(os.environ.get("AIC_XVLA_VEL_GAIN", "1.0"))
         self._dumped_images = False
         self._trace_fp = None
         self._trace_image_dir: str | None = None
@@ -124,6 +136,7 @@ class RunXVLA(Policy):
         self.get_logger().info(
             f"RunXVLA server={self.server_url} replan_every={self.replan_every} "
             f"timeout_s={self.timeout_s} control_period_s={self.control_period_s} "
+            f"cmd_mode={self.cmd_mode} vel_gain={self.vel_gain} "
             f"debug_image_dir={self.debug_image_dir} bgr_input={self.bgr_input} "
             f"trace_path={self.trace_path}"
         )
@@ -247,6 +260,43 @@ class RunXVLA(Policy):
         )
         self.set_pose_target(move_robot=move_robot, pose=pose)
 
+    def _send_velocity(
+        self,
+        move_robot: MoveRobotCallback,
+        action: np.ndarray,
+        live_pos: tuple[float, float, float],
+    ) -> None:
+        """Cartesian twist command: linear velocity = (target_pos - live_pos) / dt.
+
+        Angular velocity is left at zero — orientation only matters when the
+        gripper is descending toward the port; the descent itself is a pure
+        translation in the demo, and stiff position-mode tracking on rotation
+        already keeps the wrist aligned. Mirrors the RunACT recipe.
+        """
+        dt = max(self.control_period_s, 1e-3)
+        vx = self.vel_gain * (float(action[0]) - live_pos[0]) / dt
+        vy = self.vel_gain * (float(action[1]) - live_pos[1]) / dt
+        vz = self.vel_gain * (float(action[2]) - live_pos[2]) / dt
+        twist = Twist(
+            linear=Vector3(x=vx, y=vy, z=vz),
+            angular=Vector3(x=0.0, y=0.0, z=0.0),
+        )
+        m = MotionUpdate()
+        m.velocity = twist
+        m.header.frame_id = "base_link"
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.target_stiffness = np.diag([100.0, 100.0, 100.0, 50.0, 50.0, 50.0]).flatten()
+        m.target_damping = np.diag([40.0, 40.0, 40.0, 15.0, 15.0, 15.0]).flatten()
+        m.feedforward_wrench_at_tip = Wrench(
+            force=Vector3(x=0.0, y=0.0, z=0.0), torque=Vector3(x=0.0, y=0.0, z=0.0)
+        )
+        m.wrench_feedback_gains_at_tip = [0.5, 0.5, 0.5, 0.0, 0.0, 0.0]
+        m.trajectory_generation_mode.mode = TrajectoryGenerationMode.MODE_VELOCITY
+        try:
+            move_robot(motion_update=m)
+        except Exception as ex:
+            self.get_logger().info(f"move_robot exception: {ex}")
+
     def insert_cable(
         self,
         task: Task,
@@ -301,7 +351,10 @@ class RunXVLA(Policy):
 
             action = chunk[chunk_idx]
             chunk_idx += 1
-            self._send_pose(move_robot, action)
+            if self.cmd_mode == "velocity":
+                self._send_velocity(move_robot, action, live_pos)
+            else:
+                self._send_pose(move_robot, action)
             self.get_logger().info(
                 f"step={step} live_pos=[{live_pos[0]:+.4f},{live_pos[1]:+.4f},{live_pos[2]:+.4f}] "
                 f"target_pos=[{action[0]:+.4f},{action[1]:+.4f},{action[2]:+.4f}] "
