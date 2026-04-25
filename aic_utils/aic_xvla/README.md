@@ -104,24 +104,27 @@ Checkpoints land in `runnings/aic_xvla/ckpt-<step>/`.
 
 ## W&B
 
-X-VLA logs to **tensorboard** (via `Accelerator(log_with="tensorboard")`); it does not call `wandb` directly. Two options:
+X-VLA logs to **tensorboard** (via `Accelerator(log_with="tensorboard")`); it does not call `wandb` directly. The wrapper bridges the gap by calling `wandb.init(sync_tensorboard=True)` before X-VLA writes any tfevent — wandb then captures every event live.
 
-**Live mirror (recommended)** — start a W&B run that tails the tensorboard event file:
-
-```bash
-wandb login                                             # one-time
-wandb init -p aic-xvla -e <your-entity>                 # creates wandb/run dir
-wandb sync --sync-tensorboard runnings/aic_xvla &       # background
-# then launch training as above
-```
-
-**Post-hoc upload** — after a run finishes:
+**Live mirror** — pass `--wandb-project` (and optionally `--wandb-entity`, `--wandb-run-name`) to `aic_xvla.train`:
 
 ```bash
-wandb sync --sync-tensorboard runnings/aic_xvla --project aic-xvla --entity <your-entity>
+pip install wandb            # one-time, in the X-VLA env
+wandb login                  # one-time
+
+accelerate launch --num_processes 1 --mixed_precision bf16 -m aic_xvla.train \
+    --mode peft \
+    --wandb-project aic-xvla --wandb-entity <your-entity> --wandb-run-name overfit-1ep \
+    --models 2toINF/X-VLA-Pt \
+    ...                                # rest of training args as above
 ```
 
-If you prefer native W&B logging, patch X-VLA `train.py` `Accelerator(log_with=["tensorboard","wandb"])` and `accelerator.init_trackers("XVLA-Training", config=vars(args), init_kwargs={"wandb": {"project": "aic-xvla"}})` — kept out of this wrapper to avoid forking X-VLA.
+**Post-hoc upload** — for a run launched without `--wandb-project`:
+
+```bash
+wandb sync --sync-tensorboard runnings/aic_xvla/XVLA-Training \
+    --project aic-xvla --entity <your-entity>
+```
 
 ## Eval
 
