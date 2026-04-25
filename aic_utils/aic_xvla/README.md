@@ -126,24 +126,76 @@ wandb sync --sync-tensorboard runnings/aic_xvla/XVLA-Training \
     --project aic-xvla --entity <your-entity>
 ```
 
-## Eval
+## Eval — offline replay (sanity check, no simulator)
 
-Smoke test:
+Predict actions for sampled frames of an episode and compare to ground-truth:
 
 ```bash
-python -m aic_xvla.eval \
-    --checkpoint runnings/aic_xvla/ckpt-100000 \
-    --left  /tmp/left.jpg \
-    --center /tmp/center.jpg \
-    --right /tmp/right.jpg
+PYTHONPATH=$XVLA_REPO python -m aic_xvla.replay \
+    --checkpoint /home/yifeng/aic_xvla_overfit/ckpt-3000 \
+    --meta /home/yifeng/aic_data_one_ep/aic_meta.json \
+    --sample-every 50 --horizon 10
 ```
 
-For closed-loop rollouts in the aic engine, use `AICXVLAPolicy` from `aic_xvla.eval` and wire it behind the `aic_model.policy.Policy` interface. The policy returns 7D TCP `(x,y,z,qx,qy,qz,qw)` per timestep — same shape as the dataset action.
+Reports per-axis pos MAE (m) and quat-angle MAE (deg). On the verified 1-episode overfit: 14 mm / 0.87°.
+
+## Eval — closed-loop in the `aic_eval` simulator
+
+Three terminals. The X-VLA inference runs in its own conda env (torch 2.11), the ROS policy runs in the aic pixi env (torch 2.7), and they talk over HTTP.
+
+**Terminal 1 — start the inference server (X-VLA env):**
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate XVLA
+pip install fastapi uvicorn pydantic   # one-time
+export XVLA_REPO=~/workspace/X-VLA
+PYTHONPATH=$XVLA_REPO CUDA_VISIBLE_DEVICES=0 \
+    python -m aic_xvla.serve \
+        --checkpoint /home/yifeng/aic_xvla_overfit/ckpt-3000 \
+        --host 0.0.0.0 --port 8010
+# verify with:  curl http://127.0.0.1:8010/healthz
+```
+
+**Terminal 2 — start the eval container + engine (host shell):**
+
+```bash
+export DBX_CONTAINER_MANAGER=docker
+docker pull ghcr.io/intrinsic-dev/aic/aic_eval:latest
+distrobox create -r --nvidia -i ghcr.io/intrinsic-dev/aic/aic_eval:latest aic_eval
+distrobox enter -r aic_eval
+# inside the container:
+/entrypoint.sh ground_truth:=false start_aic_engine:=true
+# wait for Gazebo + RViz + "No node with name 'aic_model' found. Retrying..."
+```
+
+**Terminal 3 — start the aic_model node with our policy (aic pixi env):**
+
+```bash
+cd ~/workspace/aic
+pip install requests   # one-time, into the pixi env
+pip install -e .claude/worktree-xvla-finetune/aic_utils/aic_xvla   # adapter package
+export AIC_XVLA_SERVER_URL=http://127.0.0.1:8010
+pixi run ros2 run aic_model aic_model --ros-args \
+    -p use_sim_time:=true \
+    -p policy:=aic_xvla.ros.RunXVLA.RunXVLA
+```
+
+The policy will:
+- POST each `Observation` to `/act` (state[26] + 3 base64 JPEGs + instruction)
+- get back `[T, 7]` absolute TCP poses (pos + quat_xyzw)
+- replan every step (`AIC_XVLA_REPLAN=1`); execute via `set_pose_target` until task timeout (`AIC_XVLA_TASK_TIMEOUT_S=60`).
+
+Tunable env vars: `AIC_XVLA_SERVER_URL`, `AIC_XVLA_REPLAN`, `AIC_XVLA_TIMEOUT_S`, `AIC_XVLA_TASK_TIMEOUT_S`, `AIC_XVLA_CONTROL_PERIOD_S`.
+
+> ⚠️ With a 1-episode overfit checkpoint, closed-loop success is unlikely unless the simulator spawns the cable+port at the exact demo poses. Treat this as wiring validation; meaningful success rates need the full multi-episode dataset.
 
 ## Status (issue #14 checklist)
 
 - [x] X-VLA recipe studied; integration shape pinned
 - [x] Adapter package scaffolded
+- [x] Overfit run on the 1-episode HF dataset (loss 24.2 → 0.017 in <500 steps)
+- [x] W&B live mirror via `--wandb-project`
+- [x] Offline replay eval (14 mm / 0.87° on training episode)
+- [x] HTTP server + ROS policy for closed-loop wiring
 - [ ] Wait on colleague's full dataset upload
-- [ ] Run end-to-end fine-tune
-- [ ] Eval rollouts vs pi05 / ACT baselines
+- [ ] Closed-loop rollouts in the aic engine vs pi05 / ACT baselines
