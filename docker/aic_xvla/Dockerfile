@@ -36,8 +36,9 @@ RUN --mount=type=cache,target=/root/.cache/rattler/cache --mount=type=cache,targ
     cd /ws_aic/src/aic && pixi install --frozen
 
 # --- conda XVLA env: torch + transformers + peft + fastapi + ... ---
+# Use conda-forge only to avoid Anaconda default-channel ToS prompts.
 COPY docker/aic_xvla/xvla_requirements.txt /tmp/xvla_requirements.txt
-RUN /opt/conda/bin/conda create -n XVLA python=3.10 -y \
+RUN /opt/conda/bin/conda create -n XVLA -c conda-forge --override-channels python=3.10 -y \
     && /opt/conda/envs/XVLA/bin/pip install --no-cache-dir -r /tmp/xvla_requirements.txt
 
 # --- X-VLA upstream repo (pinned to commit 6bc2513 used to train ckpt-3000) ---
