@@ -48,11 +48,14 @@ export AIC_XVLA_CMD_MODE=pose
 export AIC_XVLA_REPLAN=15
 export AIC_XVLA_TASK_TIMEOUT_S=180
 
-# ----- 4. Zenoh wiring (verbatim from docker/aic_model/Dockerfile) -----
+# ----- 4. Zenoh wiring -----
+# Local docker-compose sets AIC_ROUTER_ADDR; submission portal sets
+# AIC_MODEL_ROUTER_ADDR per docs/custom_dockerfile.md. Accept either.
 export RMW_IMPLEMENTATION=rmw_zenoh_cpp
 
-if [[ -z "$AIC_ROUTER_ADDR" ]]; then
-    echo "AIC_ROUTER_ADDR must be provided"
+ROUTER_ADDR="${AIC_MODEL_ROUTER_ADDR:-${AIC_ROUTER_ADDR:-}}"
+if [[ -z "$ROUTER_ADDR" ]]; then
+    echo "Neither AIC_MODEL_ROUTER_ADDR nor AIC_ROUTER_ADDR is set"
     exit 1
 fi
 
@@ -68,7 +71,7 @@ if should_enable_acl; then
     echo "model:$AIC_MODEL_PASSWD" >> /credentials.txt
 fi
 
-ZENOH_CONFIG_OVERRIDE='connect/endpoints=["tcp/'"$AIC_ROUTER_ADDR"'"]'
+ZENOH_CONFIG_OVERRIDE='connect/endpoints=["tcp/'"$ROUTER_ADDR"'"]'
 ZENOH_CONFIG_OVERRIDE+=';transport/shared_memory/enabled=false'
 if should_enable_acl; then
     ZENOH_CONFIG_OVERRIDE+=';transport/auth/usrpwd/user="model"'
