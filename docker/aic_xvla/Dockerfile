@@ -5,9 +5,12 @@
 
 FROM docker.io/library/ros:kilted-ros-core AS build
 
-# OS deps for building/installing python + curl
+# OS deps for building/installing python + curl + cv2 runtime libs
+# (libgl1, libglib2.0-0 needed because pypi opencv-python gets pulled in as
+# a transitive of mmengine/timm and shadows opencv-python-headless)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates bzip2 build-essential \
+        libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- pixi (ROS-side env, identical to docker/aic_model/Dockerfile) ---
