@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ch_milestones</name>
+  <version>0.0.2</version>
+  <description>Milestone data collection policies and producers for AIC.</description>
+  <maintainer email="yl@example.com">yl</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>aic_control_interfaces</depend>
+  <depend>aic_engine_interfaces</depend>
+  <depend>aic_model</depend>
+  <depend>aic_model_interfaces</depend>
+  <depend>aic_task_interfaces</depend>
+  <depend>controller_manager_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>lifecycle_msgs</depend>
+  <depend>python3-transforms3d</depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>simulation_interfaces</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>xacro</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
