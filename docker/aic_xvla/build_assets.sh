@@ -12,10 +12,18 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ASSETS_DIR="$REPO_ROOT/docker/aic_xvla"
 
 # 1. HF base model cache
+# XVLA_PYTHON: defaults to host conda XVLA env. Override if installed elsewhere.
+XVLA_PYTHON="${XVLA_PYTHON:-$HOME/miniconda3/envs/XVLA/bin/python}"
 if [[ ! -d "$ASSETS_DIR/hf_cache/hub/models--2toINF--X-VLA-Pt" ]]; then
+    if [[ ! -x "$XVLA_PYTHON" ]]; then
+        echo "ERROR: XVLA python not found at $XVLA_PYTHON"
+        echo "Set XVLA_PYTHON env var, or install XVLA env per docker/aic_xvla/README.md."
+        exit 1
+    fi
     echo "==> Pre-fetching 2toINF/X-VLA-Pt into $ASSETS_DIR/hf_cache (~3.3 GB)..."
+    echo "    using $XVLA_PYTHON"
     mkdir -p "$ASSETS_DIR/hf_cache"
-    HF_HOME="$ASSETS_DIR/hf_cache" /opt/conda/envs/XVLA/bin/python -c \
+    HF_HOME="$ASSETS_DIR/hf_cache" "$XVLA_PYTHON" -c \
         "from huggingface_hub import snapshot_download; \
          snapshot_download('2toINF/X-VLA-Pt')"
 else
