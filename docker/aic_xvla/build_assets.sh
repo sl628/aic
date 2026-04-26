@@ -12,12 +12,22 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ASSETS_DIR="$REPO_ROOT/docker/aic_xvla"
 
 # 1. HF base model cache
-# XVLA_PYTHON: defaults to host conda XVLA env. Override if installed elsewhere.
+# Prefer copying from existing host cache (~/.cache/huggingface). Fall back to
+# fresh download via host XVLA python if missing.
+HOST_HF_CACHE="${HOST_HF_CACHE:-$HOME/.cache/huggingface}"
 XVLA_PYTHON="${XVLA_PYTHON:-$HOME/miniconda3/envs/XVLA/bin/python}"
-if [[ ! -d "$ASSETS_DIR/hf_cache/hub/models--2toINF--X-VLA-Pt" ]]; then
+TARGET_MODEL_DIR="$ASSETS_DIR/hf_cache/hub/models--2toINF--X-VLA-Pt"
+if [[ -d "$TARGET_MODEL_DIR" ]]; then
+    echo "==> HF cache already present at $ASSETS_DIR/hf_cache, skipping."
+elif [[ -d "$HOST_HF_CACHE/hub/models--2toINF--X-VLA-Pt" ]]; then
+    echo "==> Copying HF cache from $HOST_HF_CACHE/hub/models--2toINF--X-VLA-Pt (~3.3 GB)..."
+    mkdir -p "$ASSETS_DIR/hf_cache/hub"
+    cp -r "$HOST_HF_CACHE/hub/models--2toINF--X-VLA-Pt" "$ASSETS_DIR/hf_cache/hub/"
+else
     if [[ ! -x "$XVLA_PYTHON" ]]; then
-        echo "ERROR: XVLA python not found at $XVLA_PYTHON"
-        echo "Set XVLA_PYTHON env var, or install XVLA env per docker/aic_xvla/README.md."
+        echo "ERROR: no host HF cache and XVLA python not found at $XVLA_PYTHON"
+        echo "Either populate $HOST_HF_CACHE/hub/models--2toINF--X-VLA-Pt manually,"
+        echo "or set XVLA_PYTHON env var to a python with huggingface_hub installed."
         exit 1
     fi
     echo "==> Pre-fetching 2toINF/X-VLA-Pt into $ASSETS_DIR/hf_cache (~3.3 GB)..."
@@ -26,8 +36,6 @@ if [[ ! -d "$ASSETS_DIR/hf_cache/hub/models--2toINF--X-VLA-Pt" ]]; then
     HF_HOME="$ASSETS_DIR/hf_cache" "$XVLA_PYTHON" -c \
         "from huggingface_hub import snapshot_download; \
          snapshot_download('2toINF/X-VLA-Pt')"
-else
-    echo "==> HF cache already present at $ASSETS_DIR/hf_cache, skipping."
 fi
 
 # 2. LoRA ckpt
