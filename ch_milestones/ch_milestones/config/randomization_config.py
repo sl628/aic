@@ -11,7 +11,7 @@ TASK_BOARD_JITTER = {
     "task_board_z": 0.0,
     "task_board_roll": 0.0,
     "task_board_pitch": 0.0,
-    "task_board_yaw": 1.57/2.0,
+    "task_board_yaw": 1.57/1.6,
 }
 
 CABLE_JITTER = {

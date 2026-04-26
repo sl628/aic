@@ -38,6 +38,8 @@ class MilestoneDataProducer(Node):
         self.declare_parameter("settle_seconds", 1.0)
         self.declare_parameter("action_timeout_padding_seconds", 15.0)
         self.declare_parameter("episode_count", 1)
+        self.declare_parameter("retry_failed_episodes", True)
+        self.declare_parameter("max_episode_attempts", 0)
         self.declare_parameter("reset_before_episode", True)
         self.declare_parameter("clear_after_episodes", True)
         self.declare_parameter("reset_service_timeout_seconds", 300.0)
@@ -52,26 +54,59 @@ class MilestoneDataProducer(Node):
         self.current_recorder = None
 
     def run(self):
-        for episode in range(self.get_parameter("episode_count").value):
-            self.get_logger().info(f"Starting milestone episode {episode}")
-            self.run_episode()
+        episode_count = self.get_parameter("episode_count").value
+        retry_failed = self.get_parameter("retry_failed_episodes").value
+        max_attempts = self.get_parameter("max_episode_attempts").value
+        completed = 0
+        attempt = 0
+        force_reset = False
+        while completed < episode_count:
+            attempt += 1
+            if max_attempts > 0 and attempt > max_attempts:
+                raise RuntimeError(
+                    f"Episode {completed} failed after {max_attempts} attempts"
+                )
+            self.get_logger().info(
+                f"Starting milestone episode {completed} attempt {attempt}"
+            )
+            try:
+                self.run_episode(force_reset=force_reset)
+            except Exception as exc:
+                self.get_logger().error(
+                    f"Milestone episode {completed} attempt {attempt} failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                if not retry_failed:
+                    raise
+                force_reset = True
+                self.get_logger().info(
+                    f"Retrying milestone episode {completed} with environment reset"
+                )
+                continue
+            completed += 1
+            attempt = 0
+            force_reset = False
         if self.get_parameter("clear_after_episodes").value:
             self.resetter.clear(
                 self.get_parameter("reset_service_timeout_seconds").value
             )
         self.transition(Transition.TRANSITION_UNCONFIGURED_SHUTDOWN)
 
-    def run_episode(self):
+    def run_episode(self, force_reset=False):
         task = task_from_parameters(self)
         recorder = self.create_recorder()
         self.current_recorder = recorder
-        if self.get_parameter("reset_before_episode").value:
-            self.resetter.reset(
-                self.get_parameter("reset_service_timeout_seconds").value
-            )
-        self.transition(Transition.TRANSITION_CONFIGURE)
+        configured = False
+        active = False
         try:
+            if force_reset or self.get_parameter("reset_before_episode").value:
+                self.resetter.reset(
+                    self.get_parameter("reset_service_timeout_seconds").value
+                )
+            self.transition(Transition.TRANSITION_CONFIGURE)
+            configured = True
             self.transition(Transition.TRANSITION_ACTIVATE)
+            active = True
             recorder.start(task)
             recorder.wait_for_observation(
                 self.get_parameter("observation_timeout_seconds").value
@@ -84,8 +119,10 @@ class MilestoneDataProducer(Node):
                 recorder.stop()
             finally:
                 self.current_recorder = None
-                self.transition(Transition.TRANSITION_DEACTIVATE)
-                self.transition(Transition.TRANSITION_CLEANUP)
+                if active:
+                    self.transition(Transition.TRANSITION_DEACTIVATE)
+                if configured:
+                    self.transition(Transition.TRANSITION_CLEANUP)
         self.get_logger().info(f"LeRobot episodes written to {recorder.path}")
 
     def create_recorder(self):
@@ -138,9 +175,13 @@ class MilestoneDataProducer(Node):
             task.time_limit
             + self.get_parameter("action_timeout_padding_seconds").value
         )
-        wrapped = self.await_future(
-            goal_handle.get_result_async(), timeout, "InsertCable result"
-        )
+        try:
+            wrapped = self.await_future(
+                goal_handle.get_result_async(), timeout, "InsertCable result"
+            )
+        except TimeoutError:
+            self.cancel_goal(goal_handle)
+            raise
         result = {
             "status": wrapped.status,
             "success": wrapped.result.success,
@@ -149,6 +190,14 @@ class MilestoneDataProducer(Node):
         if not wrapped.result.success:
             raise RuntimeError(f"InsertCable failed: {wrapped.result.message}")
         return result
+
+    def cancel_goal(self, goal_handle):
+        self.get_logger().warn("Canceling InsertCable goal after collector timeout")
+        response = self.await_future(
+            goal_handle.cancel_goal_async(), 30.0, "cancel InsertCable goal"
+        )
+        if not response.goals_canceling:
+            self.get_logger().warn("InsertCable goal was not accepted for cancellation")
 
     def feedback(self, msg):
         message = msg.feedback.message

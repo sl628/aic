@@ -1,3 +1,4 @@
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
@@ -139,6 +140,8 @@ def generate_launch_description():
                     "action_timeout_padding_seconds", float
                 ),
                 "episode_count": typed("episode_count", int),
+                "retry_failed_episodes": typed("retry_failed_episodes", bool),
+                "max_episode_attempts": typed("max_episode_attempts", int),
                 "reset_before_episode": typed("reset_before_episode", bool),
                 "clear_after_episodes": typed("clear_after_episodes", bool),
                 "reset_service_timeout_seconds": typed(
@@ -197,6 +200,8 @@ def generate_launch_description():
             argument("settle_seconds", 1.0),
             argument("action_timeout_padding_seconds", 15.0),
             argument("episode_count", 1),
+            argument("retry_failed_episodes", "true"),
+            argument("max_episode_attempts", 0),
             argument("reset_before_episode", "true"),
             argument("clear_after_episodes", "true"),
             argument("reset_service_timeout_seconds", 300.0),

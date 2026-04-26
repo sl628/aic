@@ -221,7 +221,12 @@ class StageEpisodeRecorder:
                 return
             try:
                 if self.completed:
-                    self.save_completed_episode()
+                    try:
+                        self.save_completed_episode()
+                    except Exception:
+                        for stage in STAGES:
+                            self.datasets[stage].clear_episode_buffer()
+                        raise
                 else:
                     for stage in STAGES:
                         self.datasets[stage].clear_episode_buffer()

@@ -25,7 +25,7 @@ class OracleFrames:
 
         port_ref = guide.transform("base_link", port_frame)
         node.get_logger().info(
-            "Oracle frames: using CheatCode convention "
+            "Oracle frames: using port-link reference convention "
             "orientation=port_link, position=port_link+base_z_offset"
         )
         return cls(
