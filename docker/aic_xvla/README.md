@@ -27,7 +27,7 @@ ROS node — preserving the standard Zenoh wiring exactly as
 ## Build
 
 ```bash
-cd /home/yifeng/workspace/aic/.claude/worktree-xvla-finetune
+cd /home/yifeng/workspace/aic/.claude/worktree-xvla-submission
 
 # 1. Pre-fetch big artifacts (~3.5 GB) into docker/aic_xvla/{hf_cache,aic_xvla_ckpt,X-VLA-src.tar}
 ./docker/aic_xvla/build_assets.sh

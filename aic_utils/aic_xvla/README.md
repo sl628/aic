@@ -173,7 +173,7 @@ distrobox enter -r aic_eval
 The aic pixi env has no `pip` (conda-only). We use `PYTHONPATH` so the package becomes importable without installing into the env. (`requests` is already available via pixi deps.)
 
 ```bash
-cd ~/workspace/aic/.claude/worktree-xvla-finetune
+cd ~/workspace/aic/.claude/worktree-xvla-submission
 export PYTHONPATH=$PWD/aic_utils/aic_xvla
 export AIC_XVLA_SERVER_URL=http://127.0.0.1:8010
 
