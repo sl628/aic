@@ -36,7 +36,7 @@ cd /home/yifeng/workspace/aic/.claude/worktree-xvla-submission
 docker compose -f docker/docker-compose.yaml build model
 ```
 
-Image size target: ~12 GB.
+Image size: ~22 GB (no documented portal cap).
 
 ## Local verification (mandatory before push)
 
@@ -68,6 +68,13 @@ echo "URI for portal: 973918476471.dkr.ecr.us-east-1.amazonaws.com/aic-team/cabl
 ```
 
 Then paste the URI into the submission portal under Qualification phase.
+
+## First submission (2026-04-26)
+
+- Tag: `xvla-20260426-1`
+- Image digest: `sha256:658ee56efaa91029f4a2e94012a94e4eea1e720f4843273047a764bd300dd411`
+- Local verification: ACL off=60.4, ACL on=62.2 (3/3 successful, baseline 63.5)
+- Status: submitted to portal as Qualification phase
 
 ## Files
 
