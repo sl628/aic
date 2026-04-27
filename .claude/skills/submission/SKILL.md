@@ -93,7 +93,7 @@ Block on ALL of these:
 - [ ] ACL-on local run also passed (step 5)
 - [ ] `docker/aic_xvla/{hf_cache,aic_xvla_ckpt,X-VLA-src.tar}` exist (step 1 ran)
 - [ ] `aws sts get-caller-identity` returns CableHolder identity (step 2 ran)
-- [ ] `docker image inspect aic-xvla:v1 --format '{{.Size}}'` returns ≤16 GB
+- [ ] `docker image inspect aic-xvla:v1 --format '{{.Size}}'` size noted (no documented portal limit; X-VLA image is ~22 GB and was accepted)
 - [ ] No secrets baked into image (`docker run --rm aic-xvla:v1 env | grep -i aws` is empty)
 
 ## Known failure modes (2026-04-26 debugging session)
