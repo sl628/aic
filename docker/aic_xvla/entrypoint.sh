@@ -13,7 +13,7 @@ export HF_HOME=/opt/hf_cache
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export PYTHONPATH=/opt/X-VLA:/ws_aic/src/aic/aic_utils/aic_xvla
-export AIC_XVLA_ACTION_ENCODING=absolute  # match training; eval.py auto-detects via sidecar
+export AIC_XVLA_ACTION_ENCODING=delta  # match training; eval.py auto-detects via sidecar
 
 mkdir -p /tmp/xvla
 /opt/conda/envs/XVLA/bin/python -m aic_xvla.serve \
@@ -42,11 +42,11 @@ if ! curl -sf http://127.0.0.1:8010/health >/dev/null 2>&1; then
     exit 1
 fi
 
-# ----- 3. RunXVLA configuration (matches the validated 63.5-score local run) -----
+# ----- 3. RunXVLA configuration (matches the validated 94-score ckpt-20000 dev run) -----
 export AIC_XVLA_SERVER_URL=http://127.0.0.1:8010
 export AIC_XVLA_CMD_MODE=pose
-export AIC_XVLA_REPLAN=15
-export AIC_XVLA_TASK_TIMEOUT_S=180
+export AIC_XVLA_REPLAN=1
+export AIC_XVLA_TASK_TIMEOUT_S=60
 
 # ----- 4. Zenoh wiring -----
 # Local docker-compose sets AIC_ROUTER_ADDR; submission portal sets
