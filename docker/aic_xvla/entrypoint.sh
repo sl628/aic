@@ -45,7 +45,7 @@ fi
 # ----- 3. RunXVLA configuration (matches the validated 94-score ckpt-20000 dev run) -----
 export AIC_XVLA_SERVER_URL=http://127.0.0.1:8010
 export AIC_XVLA_CMD_MODE=pose
-export AIC_XVLA_REPLAN=1
+export AIC_XVLA_REPLAN=15
 export AIC_XVLA_TASK_TIMEOUT_S=180
 
 # ----- 4. Zenoh wiring -----
