@@ -46,7 +46,7 @@ fi
 export AIC_XVLA_SERVER_URL=http://127.0.0.1:8010
 export AIC_XVLA_CMD_MODE=pose
 export AIC_XVLA_REPLAN=1
-export AIC_XVLA_TASK_TIMEOUT_S=60
+export AIC_XVLA_TASK_TIMEOUT_S=180
 
 # ----- 4. Zenoh wiring -----
 # Local docker-compose sets AIC_ROUTER_ADDR; submission portal sets
