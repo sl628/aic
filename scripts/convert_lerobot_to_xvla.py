@@ -45,11 +45,17 @@ def main():
     info = json.loads((root / "meta" / "info.json").read_text())
     n_total = info["total_episodes"]
     fps = info["fps"]
-    data_path_tpl = info["data_path"]  # e.g. "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
-    video_path_tpl = info["video_path"]  # e.g. "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    data_path_tpl = info[
+        "data_path"
+    ]  # e.g. "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+    video_path_tpl = info[
+        "video_path"
+    ]  # e.g. "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 
     # Episode metadata to know frame range per episode
-    ep_meta = pq.read_table(str(root / "meta/episodes/chunk-000/file-000.parquet")).to_pandas()
+    ep_meta = pq.read_table(
+        str(root / "meta/episodes/chunk-000/file-000.parquet")
+    ).to_pandas()
 
     out_root = Path(args.output)
     ep_dir = out_root / "episodes"
@@ -82,7 +88,9 @@ def main():
             (ep_out / "images" / cam).mkdir(parents=True, exist_ok=True)
 
         # Read data parquet (slice this episode's row range; v3.0 may pack multiple eps per shard)
-        data_path = root / data_path_tpl.format(chunk_index=data_chunk, file_index=data_file)
+        data_path = root / data_path_tpl.format(
+            chunk_index=data_chunk, file_index=data_file
+        )
         df_full = pq.read_table(str(data_path)).to_pandas()
         if len(df_full) == n_frames:
             df = df_full
@@ -99,7 +107,9 @@ def main():
             cam_key = f"observation.images.{cam}"
             vchunk = int(row[f"videos/{cam_key}/chunk_index"])
             vfile = int(row[f"videos/{cam_key}/file_index"])
-            vp = root / video_path_tpl.format(video_key=cam_key, chunk_index=vchunk, file_index=vfile)
+            vp = root / video_path_tpl.format(
+                video_key=cam_key, chunk_index=vchunk, file_index=vfile
+            )
             cap = cv2.VideoCapture(str(vp))
             if not cap.isOpened():
                 raise RuntimeError(f"Cannot open {vp}")
@@ -122,7 +132,10 @@ def main():
             # State and action from parquet
             row_data = df.iloc[i]
             rec = {
-                **{f"state_{j}": float(row_data[f"observation.state"][j]) for j in range(26)},
+                **{
+                    f"state_{j}": float(row_data[f"observation.state"][j])
+                    for j in range(26)
+                },
                 **{f"action_{j}": float(row_data["action"][j]) for j in range(7)},
                 "image_path_left_camera": img_paths["left_camera"],
                 "image_path_center_camera": img_paths["center_camera"],
@@ -145,7 +158,9 @@ def main():
         "datalist": sorted(
             [
                 {
-                    "parquet_path": str((ep_dir / f"episode_{ep:04d}" / "data.parquet").resolve()),
+                    "parquet_path": str(
+                        (ep_dir / f"episode_{ep:04d}" / "data.parquet").resolve()
+                    ),
                     "image_root": str(out_root.resolve()),
                     "instruction": args.instruction,
                     "fps": fps,
