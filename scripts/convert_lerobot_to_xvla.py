@@ -108,16 +108,13 @@ def main():
         records = []
 
         for i in range(n_frames):
-            # Read images from video
+            # Sequential read (avoid per-frame seeks; videos start at frame 0 of episode)
             img_paths = {}
             for cam in CAMERAS:
                 cap = vcaps[cam]
-                # Set to exact frame position
-                cap.set(cv2.CAP_PROP_POS_FRAMES, i)
                 ret, img_bgr = cap.read()
                 if not ret:
                     raise RuntimeError(f"Failed to read frame {i} from {cam}")
-                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
                 fname = f"frame_{i:04d}.jpg"
                 cv2.imwrite(str(ep_out / "images" / cam / fname), img_bgr)
                 img_paths[cam] = f"episodes/episode_{ep_idx:04d}/images/{cam}/{fname}"
