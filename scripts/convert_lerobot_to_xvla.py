@@ -71,25 +71,35 @@ def main():
     for ep_idx in eps:
         row = ep_meta[ep_meta["episode_index"] == ep_idx].iloc[0]
         n_frames = int(row["length"])
+        data_chunk = int(row["data/chunk_index"])
+        data_file = int(row["data/file_index"])
+        ds_from = int(row["dataset_from_index"])
+        ds_to = int(row["dataset_to_index"])
 
         ep_out = ep_dir / f"episode_{ep_idx:04d}"
         ep_out.mkdir(parents=True, exist_ok=True)
         for cam in CAMERAS:
             (ep_out / "images" / cam).mkdir(parents=True, exist_ok=True)
 
-        # Read data parquet
-        data_path = root / data_path_tpl.format(chunk_index=0, file_index=ep_idx)
-        df = pq.read_table(str(data_path)).to_pandas()
+        # Read data parquet (slice this episode's row range; v3.0 may pack multiple eps per shard)
+        data_path = root / data_path_tpl.format(chunk_index=data_chunk, file_index=data_file)
+        df_full = pq.read_table(str(data_path)).to_pandas()
+        if len(df_full) == n_frames:
+            df = df_full
+        else:
+            df = df_full.iloc[ds_from:ds_to].reset_index(drop=True)
 
         # Drop video columns
         video_cols = [c for c in df.columns if c.startswith("observation.images")]
         df = df.drop(columns=video_cols, errors="ignore")
 
-        # Open video captures
+        # Open video captures (per-camera shard lookup)
         vcaps = {}
         for cam in CAMERAS:
             cam_key = f"observation.images.{cam}"
-            vp = root / video_path_tpl.format(video_key=cam_key, chunk_index=0, file_index=ep_idx)
+            vchunk = int(row[f"videos/{cam_key}/chunk_index"])
+            vfile = int(row[f"videos/{cam_key}/file_index"])
+            vp = root / video_path_tpl.format(video_key=cam_key, chunk_index=vchunk, file_index=vfile)
             cap = cv2.VideoCapture(str(vp))
             if not cap.isOpened():
                 raise RuntimeError(f"Cannot open {vp}")
