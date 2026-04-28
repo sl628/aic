@@ -38,6 +38,7 @@ def main():
     p.add_argument("--dataset", default="siyulw2025/cableholder-all")
     p.add_argument("--output", required=True)
     p.add_argument("--episodes", default=None)
+    p.add_argument("--instruction", default="insert the SFP cable into the port")
     args = p.parse_args()
 
     root = get_snapshot_root(args.dataset)
@@ -139,7 +140,7 @@ def main():
                 {
                     "parquet_path": str((ep_dir / f"episode_{ep:04d}" / "data.parquet").resolve()),
                     "image_root": str(out_root.resolve()),
-                    "instruction": "insert the SFP cable into the port",
+                    "instruction": args.instruction,
                     "fps": fps,
                 }
                 for ep in eps
