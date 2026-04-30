@@ -1,56 +1,59 @@
 #!/bin/bash
-# entrypoint for aic_xvla submission image.
+# entrypoint for phase-aware X-VLA submission image.
 #
-# 1) Launch X-VLA inference FastAPI server in background (conda XVLA env).
+# 1) Launch phase-aware inference server (classifier + 4 adapters) in background.
 # 2) Wait for /health.
-# 3) Set RunXVLA env vars matching the validated 63.5-score recipe.
-# 4) Replicate docker/aic_model/Dockerfile's Zenoh wiring verbatim.
-# 5) exec the ROS aic_model node with policy=aic_xvla.ros.RunXVLA.
+# 3) Set RunXVLA env vars.
+# 4) Zenoh wiring (same as base).
+# 5) exec the ROS aic_model node.
 set -e
 
-# ----- 1. Background X-VLA inference server -----
+# ----- 1. Background phase-aware inference server -----
 export HF_HOME=/opt/hf_cache
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export PYTHONPATH=/opt/X-VLA:/ws_aic/src/aic/aic_utils/aic_xvla
-export AIC_XVLA_ACTION_ENCODING=absolute  # match training; eval.py auto-detects via sidecar
 
 mkdir -p /tmp/xvla
 /opt/conda/envs/XVLA/bin/python -m aic_xvla.serve \
-    --checkpoint /opt/aic_xvla_ckpt \
+    --base-model 2toINF/X-VLA-Pt \
+    --checkpoints \
+/opt/aic_xvla_ckpt/phase_0,\
+/opt/aic_xvla_ckpt/phase_1,\
+/opt/aic_xvla_ckpt/phase_2,\
+/opt/aic_xvla_ckpt/phase_3 \
+    --classifier /opt/aic_xvla_ckpt/phase_classifier_v2.pt \
     --host 127.0.0.1 --port 8010 \
     > /tmp/xvla/serve.log 2>&1 &
 SERVER_PID=$!
 
-# ----- 2. Wait for /health (max 180s — first model load on cold GPU) -----
-echo "waiting for X-VLA server to become ready..."
+# ----- 2. Wait for /health (max 180s) -----
+echo "waiting for phase-aware X-VLA server to become ready..."
 for i in {1..90}; do
     if curl -sf http://127.0.0.1:8010/health >/dev/null 2>&1; then
-        echo "X-VLA server ready after ${i}x2s"
+        echo "server ready after ${i}x2s"
         break
     fi
     if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "X-VLA server died during startup. Logs:"
+        echo "server died during startup. Logs:"
         cat /tmp/xvla/serve.log
         exit 1
     fi
     sleep 2
 done
 if ! curl -sf http://127.0.0.1:8010/health >/dev/null 2>&1; then
-    echo "X-VLA server did not become healthy within 180s. Logs:"
+    echo "server did not become healthy within 180s. Logs:"
     cat /tmp/xvla/serve.log
     exit 1
 fi
 
-# ----- 3. RunXVLA configuration (matches the validated 63.5-score local run) -----
+# ----- 3. RunXVLA configuration -----
 export AIC_XVLA_SERVER_URL=http://127.0.0.1:8010
 export AIC_XVLA_CMD_MODE=pose
 export AIC_XVLA_REPLAN=15
 export AIC_XVLA_TASK_TIMEOUT_S=180
 
-# ----- 4. Zenoh wiring -----
-# Local docker-compose sets AIC_ROUTER_ADDR; submission portal sets
-# AIC_MODEL_ROUTER_ADDR per docs/custom_dockerfile.md. Accept either.
+# ----- 4. Zenoh wiring (identical to base aic_xvla entrypoint) -----
 export RMW_IMPLEMENTATION=rmw_zenoh_cpp
 
 ROUTER_ADDR="${AIC_MODEL_ROUTER_ADDR:-${AIC_ROUTER_ADDR:-}}"

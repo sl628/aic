@@ -27,7 +27,8 @@ from PIL import Image
 
 import torchvision.transforms as T
 
-from aic_xvla.eval import DEFAULT_INSTRUCTION, AICXVLAPolicy, _load_model, _state_to_proprio
+from aic_xvla.eval import DEFAULT_INSTRUCTION, AICXVLAPolicy, _load_model
+from aic_xvla.handler import _state_to_proprio
 from aic_xvla.phase_classifier_model import PhaseClassifierNet, PHASES, IMAGE_MEAN, IMAGE_STD
 
 try:
@@ -83,7 +84,7 @@ def _load_multi_adapter_model(
     for i, ckpt in enumerate(checkpoint_paths[1:], 1):
         model.load_adapter(ckpt, adapter_name=f"phase_{i}")
     model.to(device).eval()
-    return model, action_encodings
+    return model, processor, action_encodings
 
 
 def build_app(
@@ -93,8 +94,14 @@ def build_app(
     action_encodings: list[str],
     device: str,
     default_steps: int = 10,
+    phase_hysteresis: int = 5,
+    phase_confidence: float = 0.0,
 ) -> FastAPI:
     app = FastAPI(title="aic-xvla-phase")
+
+    # Phase switching state: monotonic + hysteresis.
+    # Only increases (0→1→2→3). Requires N consecutive preds of higher phase.
+    _state = {"current_phase": 0, "consecutive": 0}
 
     @app.get("/healthz")
     @app.get("/health")
@@ -111,6 +118,11 @@ def build_app(
 
             state = np.asarray(req.state, dtype=np.float64)
             proprio = _state_to_proprio(state)
+            # Pad 10D proprio to 20D (ee6d action space expects 20D).
+            if proprio.shape[-1] < 20:
+                proprio = np.concatenate(
+                    [proprio, np.zeros(20 - proprio.shape[-1], dtype=np.float32)]
+                )
 
             # Decode images and run classifier.
             views = []
@@ -121,12 +133,54 @@ def build_app(
 
             with torch.no_grad():
                 logits = classifier(img_tensor)
-                phase_idx = logits.argmax(dim=1).item()
+                probs = torch.softmax(logits, dim=1)[0]  # [P0, P1, P2, P3]
+
+            # Phase switching: monotonic + normalized confidence + progressive threshold.
+            #
+            # Only consider phases > current (never go back). Zero out passed
+            # phases and renormalize, so the model just chooses among remaining
+            # phases. Confidence threshold drops for later transitions (where
+            # visual differences are subtler).
+            s = _state
+            cur = s["current_phase"]
+            remaining_probs = probs.clone()
+            remaining_probs[:cur + 1] = 0.0
+            remaining_sum = remaining_probs.sum().item()
+
+            next_prob = 0.0
+            # Require at least 1% remaining probability to avoid amplifying noise.
+            if remaining_sum > 0.01 and cur < 3:
+                normalized = remaining_probs / remaining_sum
+                next_phase = normalized.argmax().item()
+                next_prob = normalized[next_phase].item()
+
+                # Progressive threshold: easier to transition as we go.
+                # P0→P1 needs 0.5, P1→P2 needs 0.4, P2→P3 needs 0.3.
+                thresholds = [0.5, 0.4, 0.3]
+                conf_thresh = thresholds[cur] if cur < len(thresholds) else phase_confidence
+
+                if next_prob >= conf_thresh:
+                    s["consecutive"] += 1
+                    if s["consecutive"] >= phase_hysteresis:
+                        s["current_phase"] = next_phase
+                        s["consecutive"] = 0
+                        log.info("SWITCH phase → %d (%s) norm_prob=%.3f thresh=%.2f",
+                                 next_phase, PHASES[next_phase], next_prob, conf_thresh)
+                else:
+                    s["consecutive"] = 0
+            else:
+                s["consecutive"] = 0
+
+            phase_idx = s["current_phase"]
             phase_name = PHASES[phase_idx]
 
-            log.info("classified phase=%d (%s)", phase_idx, phase_name)
+            log.info("phase=%d (%s) raw=[P0=%.2f P1=%.2f P2=%.2f P3=%.2f] norm_next=%.2f consec=%d",
+                     phase_idx, phase_name,
+                     probs[0].item(), probs[1].item(), probs[2].item(), probs[3].item(),
+                     next_prob if remaining_sum > 0 else 0.0,
+                     s["consecutive"])
 
-            # Switch to the corresponding adapter.
+            # Switch to the corresponding adapter (only if changed).
             if hasattr(model, "set_adapter"):
                 model.set_adapter(f"phase_{phase_idx}")
 
@@ -140,10 +194,8 @@ def build_app(
             lang = processor.encode_language([req.instruction])
             lang = {k: v.to(device) for k, v in lang.items()}
 
-            base_model = model.get_base_model() if hasattr(model, "get_base_model") else model
-
             with torch.no_grad():
-                actions_20d = base_model.generate_actions(
+                actions_20d = model.generate_actions(
                     image_input=image_input,
                     image_mask=image_mask,
                     proprio=proprio_t,
@@ -212,6 +264,15 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8010)
     p.add_argument("--device", default="cuda")
     p.add_argument("--steps", type=int, default=10)
+    p.add_argument(
+        "--action-encoding", default=None,
+        help="Override action encoding for all checkpoints (delta|absolute). "
+             "If unset, auto-detect from aic_xvla_meta.json sidecar.",
+    )
+    p.add_argument("--phase-hysteresis", type=int, default=5,
+        help="Min consecutive predictions of a higher phase before switching")
+    p.add_argument("--phase-confidence", type=float, default=0.0,
+        help="Min softmax probability to consider a phase switch (0=argmax)")
     args = p.parse_args()
 
     device = args.device if torch.cuda.is_available() else "cpu"
@@ -223,14 +284,19 @@ def main() -> None:
     classifier = _load_phase_classifier(args.classifier, device)
 
     # Resolve action encoding for each checkpoint.
-    encodings = [_resolve_action_encoding(c) for c in ckpt_paths]
+    if args.action_encoding:
+        encodings = [args.action_encoding] * 4
+    else:
+        encodings = [_resolve_action_encoding(c) for c in ckpt_paths]
     log.info("Action encodings: %s", encodings)
 
     log.info("Loading multi-adapter model (base=%s) ...", args.base_model)
-    model, processor = _load_multi_adapter_model(args.base_model, ckpt_paths, device, encodings)
+    model, processor, encodings = _load_multi_adapter_model(args.base_model, ckpt_paths, device, encodings)
     log.info("Model loaded on %s", device)
 
-    app = build_app(model, processor, classifier, encodings, device, args.steps)
+    app = build_app(model, processor, classifier, encodings, device, args.steps,
+                    phase_hysteresis=args.phase_hysteresis,
+                    phase_confidence=args.phase_confidence)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

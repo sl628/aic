@@ -6,14 +6,17 @@ services:
     build:
       dockerfile: docker/aic_eval/Dockerfile
       context: ..
-    command: gazebo_gui:=false launch_rviz:=false ground_truth:=false start_aic_engine:=true shutdown_on_aic_engine_exit:=true model_discovery_timeout_seconds:=600
+    command: gazebo_gui:=true launch_rviz:=true ground_truth:=false start_aic_engine:=true shutdown_on_aic_engine_exit:=true model_discovery_timeout_seconds:=600
     gpus: all
     networks:
       - default
     environment:
+      DISPLAY: $DISPLAY
       AIC_EVAL_PASSWD: CHANGE_IN_PROD
       AIC_MODEL_PASSWD: CHANGE_IN_PROD
       # AIC_ENABLE_ACL: true
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
   model:
     image: aic-xvla:v1
     build:
@@ -30,4 +33,3 @@ services:
       # AIC_ENABLE_ACL: true
 networks:
   default:
-    internal: true
