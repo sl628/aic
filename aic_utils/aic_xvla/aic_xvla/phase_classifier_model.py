@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
-from torchvision.models import resnet18
+from torchvision.models import resnet18, ResNet18_Weights
 
 PHASES = ["approach", "coarse_align", "fine_align", "insert"]
 NUM_PHASES = len(PHASES)
@@ -38,13 +38,7 @@ class PhaseClassifierNet(nn.Module):
 
     def __init__(self, num_views: int = 3, hidden: int = 256):
         super().__init__()
-        backbone = resnet18(weights=None)
-        state = torch.load(
-            "/home/yifeng/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth",
-            map_location="cpu",
-            weights_only=True,
-        )
-        backbone.load_state_dict(state)
+        backbone = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
         feat_dim = backbone.fc.in_features  # 512
         backbone.fc = nn.Identity()
         self.backbone = backbone
