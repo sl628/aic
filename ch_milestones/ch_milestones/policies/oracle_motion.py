@@ -68,7 +68,7 @@ class OracleMotionCommander:
         self.policy.get_logger().warning(
             "Oracle debug motion pause is active. "
             "Resume with: ros2 param set /aic_model "
-            "oracle_debug_pause_motion false"
+            f"{self.policy.parameter_name('oracle_debug_pause_motion')} false"
         )
         hold_pose = pose_from_transform(current)
         while self.policy.param("oracle_debug_pause_motion"):

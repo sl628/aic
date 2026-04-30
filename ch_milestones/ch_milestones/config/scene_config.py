@@ -1,5 +1,11 @@
 from pathlib import Path
 
+from ch_milestones.config.task_options import (
+    AUTO_VALUE,
+    resolve_cable_type,
+    target_board_part,
+)
+
 
 BOARD_PARTS = (
     "lc_mount_rail_0",
@@ -48,16 +54,40 @@ TASK_BOARD_DEFAULTS = {
     "task_board_yaw": 3.1415,
 }
 
-CABLE_DEFAULTS = {
-    "cable_type": "sfp_sc_cable",
-    "attach_cable_to_gripper": True,
-    "cable_x": 0.172,
-    "cable_y": 0.024,
-    "cable_z": 1.518,
-    "cable_roll": 0.4432,
-    "cable_pitch": -0.48,
-    "cable_yaw": 1.3303,
+CABLE_POSE_PRESETS = {
+    "sfp": {
+        "cable_x": 0.172,
+        "cable_y": 0.024,
+        "cable_z": 1.518,
+        "cable_roll": 0.4432,
+        "cable_pitch": -0.48,
+        "cable_yaw": 1.3303,
+    },
+    "sc": {
+        "cable_x": 0.172,
+        "cable_y": 0.024,
+        "cable_z": 1.508,
+        "cable_roll": 0.4432,
+        "cable_pitch": -0.48,
+        "cable_yaw": 1.3303,
+    },
 }
+
+CABLE_DEFAULTS = {
+    "auto_cable_pose": True,
+    "cable_type": AUTO_VALUE,
+    "attach_cable_to_gripper": True,
+    **CABLE_POSE_PRESETS["sfp"],
+}
+
+CABLE_POSE_FIELDS = (
+    "cable_x",
+    "cable_y",
+    "cable_z",
+    "cable_roll",
+    "cable_pitch",
+    "cable_yaw",
+)
 
 HOME_JOINTS = [
     "shoulder_pan_joint",
@@ -104,3 +134,24 @@ def board_part_mappings(node):
         values[f"{name}_pitch"] = node.get_parameter(f"{name}_pitch").value
         values[f"{name}_yaw"] = node.get_parameter(f"{name}_yaw").value
     return values
+
+
+def cable_type_for_task(task, configured_cable_type: str) -> str:
+    return resolve_cable_type(task.port_type, configured_cable_type)
+
+
+def cable_pose_for_task(task, configured_pose, auto_cable_pose: bool):
+    if not auto_cable_pose:
+        return configured_pose
+    preset = CABLE_POSE_PRESETS[task.port_type]
+    return tuple(preset[field] for field in CABLE_POSE_FIELDS)
+
+
+def ensure_target_board_part(task, board_parts: dict[str, bool | float]):
+    part = target_board_part(task)
+    key = f"{part}_present"
+    if key not in board_parts:
+        raise ValueError(f"Task target module '{part}' is not a known board part")
+    board_parts = dict(board_parts)
+    board_parts[key] = True
+    return board_parts

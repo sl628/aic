@@ -7,8 +7,9 @@ from transforms3d.quaternions import quat2mat
 
 
 class OracleDebugFrames:
-    def __init__(self, node):
+    def __init__(self, node, param=None):
         self.node = node
+        self.param = param or self.node_param
         self.broadcaster = TransformBroadcaster(node)
         self.announced = False
         self.last_reference = None
@@ -118,11 +119,14 @@ class OracleDebugFrames:
         self.announced = True
 
     def enabled(self):
-        return bool(self.node.get_parameter("oracle_publish_debug_frames").value)
+        return bool(self.param("oracle_publish_debug_frames"))
 
     def prefix(self):
-        prefix = str(self.node.get_parameter("oracle_debug_frame_prefix").value)
+        prefix = str(self.param("oracle_debug_frame_prefix"))
         return prefix.strip("/") or "oracle_debug"
+
+    def node_param(self, name):
+        return self.node.get_parameter(name).value
 
     def from_transform(self, stamp, parent_frame, child_frame, transform):
         stamped = TransformStamped()

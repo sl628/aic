@@ -9,6 +9,7 @@ from ch_milestones.config.task_config import (
     port_link_frame,
     task_from_parameters,
 )
+from ch_milestones.config.scene_config import cable_type_for_task
 from ch_milestones.environment.description import expand_xacro
 from ch_milestones.environment.entities import EntitySpawner
 from ch_milestones.environment.randomization import SceneRandomizer
@@ -24,10 +25,12 @@ class EnvironmentResetter:
         self.tf_listener = TransformListener(self.tf_buffer, node, spin_thread=False)
         self.randomizer = SceneRandomizer(node)
         self.spawned = []
+        self.task_index = 0
 
     def reset(self):
         timeout = self.node.get_parameter("reset_timeout_seconds").value
-        scene = self.randomizer.sample()
+        task = task_from_parameters(self.node, self.next_task_index())
+        scene = self.randomizer.sample(task)
         self.log_scene(scene)
         self.delete_spawned(timeout)
         self.robot.home(timeout)
@@ -35,14 +38,19 @@ class EnvironmentResetter:
             self.spawn_board(timeout, scene)
         self.robot.tare(timeout)
         if self.node.get_parameter("spawn_cable").value:
-            self.spawn_cable(timeout, scene)
+            self.spawn_cable(timeout, scene, task)
         time.sleep(self.node.get_parameter("post_spawn_settle_seconds").value)
-        self.wait_for_task_frames()
+        self.wait_for_task_frames(task)
 
     def clear(self):
         timeout = self.node.get_parameter("reset_timeout_seconds").value
         self.delete_spawned(timeout)
         self.robot.home(timeout)
+
+    def next_task_index(self):
+        task_index = self.task_index
+        self.task_index += 1
+        return task_index
 
     def delete_spawned(self, timeout):
         for name in reversed(self.spawned):
@@ -60,15 +68,18 @@ class EnvironmentResetter:
             self.entities.spawn_entity(name, xml, scene.board_pose, timeout)
         )
 
-    def spawn_cable(self, timeout, scene):
+    def spawn_cable(self, timeout, scene, task):
         name = self.node.get_parameter("cable_name").value
+        cable_type = cable_type_for_task(
+            task, self.node.get_parameter("cable_type").value
+        )
         xml = expand_xacro(
             self.description_file("cable.sdf.xacro"),
             {
                 "attach_cable_to_gripper": self.node.get_parameter(
                     "attach_cable_to_gripper"
                 ).value,
-                "cable_type": self.node.get_parameter("cable_type").value,
+                "cable_type": cable_type,
             },
             self.package_paths(),
         )
@@ -89,11 +100,12 @@ class EnvironmentResetter:
             f"cable=({fmt(scene.cable_pose)})"
         )
 
-    def wait_for_task_frames(self):
-        task = task_from_parameters(self.node)
+    def wait_for_task_frames(self, task=None):
+        if task is None:
+            task = task_from_parameters(self.node)
         task_board = self.node.get_parameter("task_board_name").value
         cable = self.node.get_parameter("cable_name").value
-        plug = self.node.get_parameter("plug_name").value
+        plug = task.plug_name
         self.wait_for("base_link", port_link_frame(task, task_board))
         self.wait_for("base_link", port_entrance_frame(task, task_board))
         self.wait_for("base_link", f"{cable}/{plug}_link")

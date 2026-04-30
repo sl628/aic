@@ -14,6 +14,8 @@ from rclpy.node import Node
 from ch_milestones.config.task_config import (
     declare_task_parameters,
     task_from_parameters,
+    task_prompt,
+    task_sequence_size,
 )
 from ch_milestones.environment.reset_client import ResetClient
 from ch_milestones.recording.stage_episode_recorder import StageEpisodeRecorder
@@ -52,11 +54,15 @@ class MilestoneDataProducer(Node):
         self.insert_cable = ActionClient(self, InsertCable, "/insert_cable")
         self.resetter = ResetClient(self)
         self.current_recorder = None
+        self.task_index = 0
 
     def run(self):
         episode_count = self.get_parameter("episode_count").value
         retry_failed = self.get_parameter("retry_failed_episodes").value
         max_attempts = self.get_parameter("max_episode_attempts").value
+        self.get_logger().info(
+            f"Task target sequence contains {task_sequence_size(self)} target(s)"
+        )
         completed = 0
         attempt = 0
         force_reset = False
@@ -69,8 +75,9 @@ class MilestoneDataProducer(Node):
             self.get_logger().info(
                 f"Starting milestone episode {completed} attempt {attempt}"
             )
+            task_index = self.next_task_index()
             try:
-                self.run_episode(force_reset=force_reset)
+                self.run_episode(force_reset=force_reset, task_index=task_index)
             except Exception as exc:
                 self.get_logger().error(
                     f"Milestone episode {completed} attempt {attempt} failed: "
@@ -92,8 +99,16 @@ class MilestoneDataProducer(Node):
             )
         self.transition(Transition.TRANSITION_UNCONFIGURED_SHUTDOWN)
 
-    def run_episode(self, force_reset=False):
-        task = task_from_parameters(self)
+    def next_task_index(self):
+        task_index = self.task_index
+        self.task_index += 1
+        return task_index
+
+    def run_episode(self, force_reset=False, task_index=0):
+        task = task_from_parameters(self, task_index)
+        self.get_logger().info(
+            f"Selected task target #{task_index}: {task_prompt(task)}"
+        )
         recorder = self.create_recorder()
         self.current_recorder = recorder
         configured = False

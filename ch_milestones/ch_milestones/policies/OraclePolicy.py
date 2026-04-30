@@ -8,7 +8,13 @@ from aic_model.policy import (
 )
 from aic_task_interfaces.msg import Task
 
-from ch_milestones.config.policy_config import STAGES, declare_oracle_parameters
+from ch_milestones.config.policy_config import (
+    SFP_ORACLE_DEFAULTS,
+    STAGES,
+    declare_oracle_parameters,
+    oracle_parameter_name,
+)
+from ch_milestones.config.task_config import validate_task
 from ch_milestones.policies.oracle_debug_frames import OracleDebugFrames
 from ch_milestones.policies.ground_truth_guidance import GroundTruthGuide
 from ch_milestones.policies.oracle_frames import OracleFrames
@@ -21,6 +27,7 @@ class OraclePolicy(Policy):
     def __init__(self, parent_node):
         super().__init__(parent_node)
         declare_oracle_parameters(parent_node)
+        self._task = None
 
     def insert_cable(
         self,
@@ -30,6 +37,7 @@ class OraclePolicy(Policy):
         send_feedback: SendFeedbackCallback,
     ):
         self.get_logger().info(f"OraclePolicy.insert_cable() task: {task}")
+        validate_task(task)
         self.setup(task, move_robot, send_feedback)
         self.validate_params()
 
@@ -49,12 +57,17 @@ class OraclePolicy(Policy):
         return True
 
     def setup(self, task, move_robot, send_feedback):
-        self._guide = GroundTruthGuide(self._parent_node, task)
+        self._task = task
+        self._guide = GroundTruthGuide(
+            self._parent_node, task, param=self.param
+        )
         self._frames = OracleFrames.load(self._parent_node, self._guide, task)
         self._move_robot = move_robot
         self._send_feedback = send_feedback
         self._stage = None
-        self._debug_frames = OracleDebugFrames(self._parent_node)
+        self._debug_frames = OracleDebugFrames(
+            self._parent_node, param=self.param
+        )
         self._motion = OracleMotionCommander(self)
         self._stages = OracleStageSet(self)
 
@@ -96,7 +109,9 @@ class OraclePolicy(Policy):
             raise RuntimeError("Oracle stage is not set")
         z_offset = kwargs.get("z_offset")
         if self._stage != "insert" and z_offset is not None and z_offset < 0.0:
-            raise ValueError(f"{self._stage} z_offset must stay above the port")
+            raise ValueError(
+                f"{self._stage} z_offset must stay above the port"
+            )
         position_ref = kwargs.pop("position_ref", self.frames.port_ref)
         orientation_ref = self.frames.orientation_ref
         self.debug_frames.publish_reference_frame(
@@ -141,4 +156,21 @@ class OraclePolicy(Policy):
         )
 
     def param(self, name):
-        return self._parent_node.get_parameter(name).value
+        parameter = self._parent_node.get_parameter(self.parameter_name(name))
+        value = parameter.value
+        if self.use_legacy_sfp_parameter(name, value):
+            return self._parent_node.get_parameter(name).value
+        return value
+
+    def parameter_name(self, name):
+        return oracle_parameter_name(name, self._task)
+
+    def use_legacy_sfp_parameter(self, name, value):
+        if self._task is None or self._task.port_type != "sfp":
+            return False
+        if name not in SFP_ORACLE_DEFAULTS:
+            return False
+        legacy_value = self._parent_node.get_parameter(name).value
+        return value == SFP_ORACLE_DEFAULTS[name] and (
+            legacy_value != SFP_ORACLE_DEFAULTS[name]
+        )

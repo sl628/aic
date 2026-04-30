@@ -9,9 +9,10 @@ from transforms3d.quaternions import quat2mat
 
 
 class GroundTruthGuide:
-    def __init__(self, node, task):
+    def __init__(self, node, task, param=None):
         self.node = node
         self.task = task
+        self.param = param or self.node_param
         self.tip_error_i = np.zeros(2)
         self.last_gripper_pose_debug = None
         self._last_debug_log_time = None
@@ -256,7 +257,7 @@ class GroundTruthGuide:
         self.tip_error_i = np.zeros(2)
 
     def should_log_debug(self):
-        rate_hz = self.node.get_parameter("oracle_debug_log_frequency_hz").value
+        rate_hz = self.param("oracle_debug_log_frequency_hz")
         if rate_hz <= 0.0:
             return False
         now = monotonic()
@@ -267,6 +268,9 @@ class GroundTruthGuide:
             self._last_debug_log_time = now
             return True
         return False
+
+    def node_param(self, name):
+        return self.node.get_parameter(name).value
 
     def use_base_offset(self, stage):
         return stage in ("approach", "coarse_align")
